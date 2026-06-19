@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import { Wine } from "lucide-react";
+import { Wine, AlertTriangle, Loader2 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import CategoryTabs from "@/components/menu/CategoryTabs";
 import ProductCard from "@/components/menu/ProductCard";
 import CartDrawer from "@/components/menu/CartDrawer";
 import { useBarSettings } from "@/lib/BarSettingsContext";
-import { listAvailableProducts } from "@/lib/db";
+import { listAvailableProducts, getTableByMid } from "@/lib/db";
 
 export default function Menu() {
   const [products, setProducts] = useState([]);
@@ -15,13 +15,80 @@ export default function Menu() {
   const [showCart, setShowCart] = useState(false);
   const [orderPlaced, setOrderPlaced] = useState(false);
 
+  // === Validação da mesa via QR code seguro (?m=<id>) ===
+  // Estado: "loading" | "valid" | "invalid"
+  const [tableState, setTableState] = useState("loading");
+  const [tableNumber, setTableNumber] = useState(null);
+  const [tableError, setTableError] = useState("");
+
   const urlParams = new URLSearchParams(window.location.search);
-  // Aceita tanto ?mesa=N (PT) como ?table=N (EN) para compatibilidade
-  // com QR codes que possam ter sido gerados com qualquer dos dois.
-  const tableNumber = urlParams.get("mesa") || urlParams.get("table") || "1";
+  // ID seguro da mesa (hash de 8 chars na coleção `tables`)
+  const mid = urlParams.get("m");
+  // Legacy fallback: se o QR foi gerado antes desta feature,
+  // aceita ?mesa=N ou ?table=N — mas mostra aviso.
+  const legacyMesa = urlParams.get("mesa") || urlParams.get("table");
+
   const { settings } = useBarSettings();
 
+  // Valida o ID da mesa na coleção `tables` do Firestore
   useEffect(() => {
+    let cancelled = false;
+
+    async function validateTable() {
+      if (mid) {
+        // Modo seguro: valida o ID na coleção `tables`
+        try {
+          console.info(`[Menu] A validar mesa com m=${mid}...`);
+          const table = await getTableByMid(mid);
+          if (cancelled) return;
+          if (table) {
+            console.info(`[Menu] Mesa válida: número ${table.table_number}.`);
+            setTableNumber(String(table.table_number));
+            setTableState("valid");
+          } else {
+            console.warn(`[Menu] Mesa ${mid} não encontrada em tables/.`);
+            setTableError(
+              "Este QR code não corresponde a uma mesa registada. Pede ao staff um QR code válido."
+            );
+            setTableState("invalid");
+          }
+        } catch (err) {
+          console.error("[Menu] Erro ao validar mesa:", err);
+          if (cancelled) return;
+          setTableError(
+            "Não foi possível validar a mesa. Verifica a tua ligação à internet."
+          );
+          setTableState("invalid");
+        }
+      } else if (legacyMesa) {
+        // Modo legacy: aceita ?mesa=N / ?table=N com aviso.
+        // (Apenas para retrocompatibilidade — clientes novos devem
+        // usar QR codes com ?m= gerados pelo painel Admin.)
+        console.warn(
+          `[Menu] A usar mesa legacy=${legacyMesa} (sem ?m=). Recomenda-se gerar QR codes novos.`
+        );
+        setTableNumber(String(legacyMesa));
+        setTableState("valid");
+      } else {
+        // Sem ?m= nem ?mesa= — bloqueia.
+        console.warn("[Menu] Sem parâmetro ?m= nem ?mesa= no URL.");
+        setTableError(
+          "Falta o identificador da mesa. Acede ao menu através do QR code colocado na mesa."
+        );
+        setTableState("invalid");
+      }
+    }
+
+    validateTable();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mid, legacyMesa]);
+
+  // Carrega produtos (só se a mesa for válida)
+  useEffect(() => {
+    if (tableState !== "valid") return;
     let cancelled = false;
 
     listAvailableProducts()
@@ -40,7 +107,7 @@ export default function Menu() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [tableState]);
 
   const filtered = category === "todos"
     ? products
@@ -64,6 +131,39 @@ export default function Menu() {
       return { ...c, [id]: qty - 1 };
     });
 
+  // === Ecrã: Mesa Inválida ===
+  if (tableState === "invalid") {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center gap-4">
+        <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring" }}>
+          <div className="w-20 h-20 rounded-full bg-red-500/15 flex items-center justify-center">
+            <AlertTriangle className="w-10 h-10 text-red-400" />
+          </div>
+        </motion.div>
+        <h1 className="font-playfair font-bold text-2xl text-foreground">
+          Mesa Inválida
+        </h1>
+        <p className="text-muted-foreground text-sm max-w-xs">
+          {tableError}
+        </p>
+        <p className="text-xs text-muted-foreground/60 mt-2">
+          Se precisas de ajuda, fala com o staff do bar.
+        </p>
+      </div>
+    );
+  }
+
+  // === Ecrã: Loading (a validar mesa) ===
+  if (tableState === "loading") {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3">
+        <Loader2 className="w-6 h-6 text-primary animate-spin" />
+        <p className="text-xs text-muted-foreground">A validar mesa...</p>
+      </div>
+    );
+  }
+
+  // === Ecrã: Pedido Enviado ===
   if (orderPlaced) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 text-center gap-6">
@@ -86,8 +186,18 @@ export default function Menu() {
     );
   }
 
+  // === Ecrã: Menu Principal ===
   return (
     <div className="min-h-screen bg-background pb-32">
+      {/* Aviso legacy (se entrou via ?mesa= em vez de ?m=) */}
+      {legacyMesa && !mid && (
+        <div className="bg-yellow-500/10 border-b border-yellow-500/30 px-4 py-2 text-center">
+          <p className="text-[11px] text-yellow-300">
+            ⚠️ QR code desatualizado. Pede ao staff um novo QR code para esta mesa.
+          </p>
+        </div>
+      )}
+
       {/* Header */}
       <div className="relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-b from-primary/10 to-transparent" />

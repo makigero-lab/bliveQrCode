@@ -7,9 +7,11 @@ import {
   BellOff,
   History,
   Receipt,
+  LogOut,
 } from "lucide-react";
 import TableTab from "@/components/admin/TableTab";
 import { useBarSettings } from "@/lib/BarSettingsContext";
+import { useAuth } from "@/lib/AuthContext";
 import { useOrderNotification } from "@/hooks/useOrderNotification";
 import {
   subscribeOpenOrders,
@@ -34,6 +36,7 @@ export default function Staff() {
   const knownIdsRef = useRef(new Set());
 
   const { settings } = useBarSettings();
+  const { user, logout } = useAuth();
   const { playSound } = useOrderNotification();
 
   useEffect(() => {
@@ -274,6 +277,15 @@ export default function Staff() {
               </span>
               Live
             </div>
+            {user && (
+              <button
+                onClick={() => logout()}
+                title={`Terminar sessão (${user.email})`}
+                className="w-9 h-9 rounded-full bg-destructive/10 flex items-center justify-center hover:bg-destructive/20 transition-colors"
+              >
+                <LogOut className="w-4 h-4 text-destructive" />
+              </button>
+            )}
           </div>
         </div>
 

@@ -546,3 +546,227 @@ export async function uploadFile({ file }) {
   });
   return { file_url: dataUrl, file_name: file.name };
 }
+
+// -------------------------------------------------------------
+// Mesas (coleção `tables`) — IDs seguros para QR Codes
+// -------------------------------------------------------------
+//
+// Cada mesa tem um documento com:
+//   - id: hash aleatório de 8 chars (gerado por `generateTableId`)
+//   - table_number: String com o número amigável da mesa (ex: "3")
+//   - created_date: ISO string
+//
+// O QR code aponta para `/menu?m=<id>` em vez de `/menu?mesa=3`.
+// O /menu valida o `?m=` consultando esta coleção. Se o ID não
+// existir, a app bloqueia com "Mesa Inválida" — assim clientes
+// não podem falsificar o número da mesa no URL.
+//
+// Coleção: `tables`
+// -------------------------------------------------------------
+
+const TABLES_COL = "tables";
+
+/**
+ * Gera um ID aleatório de 8 chars [A-Za-z0-9].
+ * Suficiente para evitar adivinhação (62^8 ≈ 218 triliões).
+ */
+export function generateTableId() {
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let out = "";
+  for (let i = 0; i < 8; i++) {
+    out += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return out;
+}
+
+/**
+ * Cria uma nova mesa na coleção `tables`.
+ * @param {string} tableNumber — número amigável (ex: "3")
+ * @returns {Promise<{id, table_number, created_date}>}
+ */
+export async function createTable(tableNumber) {
+  const id = generateTableId();
+  const now = new Date().toISOString();
+  const payload = {
+    table_number: String(tableNumber),
+    created_date: now,
+  };
+  // Usa setDoc com id próprio (não addDoc) para garantir o id
+  // gerado client-side.
+  await setDoc(doc(db, TABLES_COL, id), payload);
+  return { id, ...payload };
+}
+
+/**
+ * Lê uma mesa pelo ID (usado pelo /menu para validar ?m=).
+ * @param {string} mid — ID da mesa (8 chars)
+ * @returns {Promise<{id, table_number, created_date} | null>}
+ */
+export async function getTableByMid(mid) {
+  if (!mid) return null;
+  const ref = doc(db, TABLES_COL, String(mid));
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  return normalizeTimestamp({ id: snap.id, ...snap.data() });
+}
+
+/**
+ * Lista todas as mesas ordenadas por table_number asc.
+ * @returns {Promise<Array>}
+ */
+export async function listTables() {
+  const snap = await getDocs(collection(db, TABLES_COL));
+  const items = snap.docs.map((d) =>
+    normalizeTimestamp({ id: d.id, ...d.data() })
+  );
+  // Ordena por table_number (numérico quando possível)
+  return items.sort((a, b) => {
+    const aN = parseInt(a.table_number) || 0;
+    const bN = parseInt(b.table_number) || 0;
+    return aN - bN;
+  });
+}
+
+/**
+ * Apaga uma mesa pelo ID.
+ * @param {string} mid — ID da mesa
+ */
+export async function deleteTable(mid) {
+  await deleteDoc(doc(db, TABLES_COL, String(mid)));
+  return { id: mid };
+}
+
+/**
+ * Subscreve a lista de mesas em tempo real (para o painel Admin).
+ * @param {(tables: Array) => void} callback
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeTables(callback) {
+  const q = collection(db, TABLES_COL);
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items = snap.docs
+        .map((d) => normalizeTimestamp({ id: d.id, ...d.data() }))
+        .sort((a, b) => {
+          const aN = parseInt(a.table_number) || 0;
+          const bN = parseInt(b.table_number) || 0;
+          return aN - bN;
+        });
+      callback(items);
+    },
+    (err) => console.error("[db] subscribeTables error:", err)
+  );
+}
+
+// -------------------------------------------------------------
+// Utilizadores (coleção `users`) — gestão de roles
+// -------------------------------------------------------------
+//
+// Cada utilizador tem um documento na coleção `users` com:
+//   - id: uid do Firebase Auth (igual ao `user.uid`)
+//   - email: String
+//   - role: "admin" | "staff"
+//   - created_date: ISO string
+//
+// As regras de segurança do Firestore devem permitir:
+//   - Leitura de `users/{uid}` pelo próprio utilizador
+//     (para carregar a sua role após login).
+//   - Leitura/escrita de todos os `users/*` só para admins.
+//
+// Coleção: `users`
+// -------------------------------------------------------------
+
+const USERS_COL = "users";
+
+/**
+ * Lê o perfil (role) de um utilizador pelo uid do Firebase Auth.
+ * Usado pelo AuthContext após onAuthStateChanged para carregar a role.
+ *
+ * @param {string} uid
+ * @returns {Promise<{uid, email, role, created_date} | null>}
+ */
+export async function getUserProfile(uid) {
+  if (!uid) return null;
+  const ref = doc(db, USERS_COL, String(uid));
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  return normalizeTimestamp({ uid: snap.id, ...snap.data() });
+}
+
+/**
+ * Cria (ou substitui) o perfil de um utilizador.
+ * Usado pelo UsersPanel quando o admin cria um novo utilizador.
+ *
+ * @param {string} uid — uid do Firebase Auth (criado via createUserWithEmailAndPassword)
+ * @param {{email: string, role: "admin"|"staff"}} data
+ */
+export async function setUserProfile(uid, data) {
+  const now = new Date().toISOString();
+  const payload = {
+    email: String(data.email || ""),
+    role: data.role === "admin" ? "admin" : "staff",
+    created_date: now,
+    updated_date: now,
+  };
+  await setDoc(doc(db, USERS_COL, String(uid)), payload, { merge: true });
+  return { uid, ...payload };
+}
+
+/**
+ * Lista todos os utilizadores (admins + staff).
+ * @returns {Promise<Array>}
+ */
+export async function listUsers() {
+  const snap = await getDocs(collection(db, USERS_COL));
+  const items = snap.docs.map((d) =>
+    normalizeTimestamp({ uid: d.id, ...d.data() })
+  );
+  // admins primeiro, depois por email
+  return items.sort((a, b) => {
+    if (a.role === "admin" && b.role !== "admin") return -1;
+    if (a.role !== "admin" && b.role === "admin") return 1;
+    return String(a.email).localeCompare(String(b.email));
+  });
+}
+
+/**
+ * Subscreve a lista de utilizadores em tempo real.
+ * @param {(users: Array) => void} callback
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeUsers(callback) {
+  const q = collection(db, USERS_COL);
+  return onSnapshot(
+    q,
+    (snap) => {
+      const items = snap.docs
+        .map((d) =>
+          normalizeTimestamp({ uid: d.id, ...d.data() })
+        )
+        .sort((a, b) => {
+          if (a.role === "admin" && b.role !== "admin") return -1;
+          if (a.role !== "admin" && b.role === "admin") return 1;
+          return String(a.email).localeCompare(String(b.email));
+        });
+      callback(items);
+    },
+    (err) => console.error("[db] subscribeUsers error:", err)
+  );
+}
+
+/**
+ * Apaga o perfil de um utilizador (não apaga a conta Firebase Auth —
+ * para isso seria necessário Firebase Admin SDK no backend).
+ *
+ * Como workaround, o UsersPanel apaga o perfil do Firestore. A conta
+ * Auth continua a existir mas sem perfil → login falha com
+ * "utilizador não tem perfil".
+ *
+ * @param {string} uid
+ */
+export async function deleteUserProfile(uid) {
+  await deleteDoc(doc(db, USERS_COL, String(uid)));
+  return { uid };
+}

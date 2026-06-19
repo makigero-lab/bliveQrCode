@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, RefreshCw, LayoutGrid, ClipboardList, QrCode, Trash2, Pencil, Wine, BarChart2, Settings, Wifi, PackageOpen, LineChart } from "lucide-react";
+import { Plus, RefreshCw, LayoutGrid, ClipboardList, QrCode, Trash2, Pencil, Wine, BarChart2, Settings, Wifi, PackageOpen, LineChart, Users, LogOut } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import OrderCard from "@/components/admin/OrderCard";
 import ProductForm from "@/components/admin/ProductForm";
@@ -12,7 +12,9 @@ import ImportCatalogButton from "@/components/admin/ImportCatalogButton";
 import ClearAllProductsButton from "@/components/admin/ClearAllProductsButton";
 import ClearAllOrdersButton from "@/components/admin/ClearAllOrdersButton";
 import BulkProductEditor from "@/components/admin/BulkProductEditor";
+import UsersPanel from "@/components/admin/UsersPanel";
 import { useBarSettings } from "@/lib/BarSettingsContext";
+import { useAuth } from "@/lib/AuthContext";
 import {
   listProducts,
   listOrders,
@@ -22,14 +24,17 @@ import {
   subscribeOrders,
 } from "@/lib/db";
 
-const tabs = [
-  { id: "orders", label: "Pedidos", icon: ClipboardList },
-  { id: "menu", label: "Menu", icon: LayoutGrid },
-  { id: "stock", label: "Stock", icon: PackageOpen },
-  { id: "analytics", label: "Analytics", icon: LineChart },
-  { id: "sales", label: "Vendas", icon: BarChart2 },
-  { id: "qr", label: "QR", icon: QrCode },
-  { id: "settings", label: "Config.", icon: Settings },
+// Tabs base — visíveis para todos os autenticados.
+// "users" é adicionado condicionalmente se o user for admin (ver Admin()).
+const ALL_TABS = [
+  { id: "orders", label: "Pedidos", icon: ClipboardList, adminOnly: false },
+  { id: "menu", label: "Menu", icon: LayoutGrid, adminOnly: false },
+  { id: "stock", label: "Stock", icon: PackageOpen, adminOnly: false },
+  { id: "analytics", label: "Analytics", icon: LineChart, adminOnly: false },
+  { id: "sales", label: "Vendas", icon: BarChart2, adminOnly: false },
+  { id: "qr", label: "QR", icon: QrCode, adminOnly: true },
+  { id: "settings", label: "Config.", icon: Settings, adminOnly: true },
+  { id: "users", label: "Utilizadores", icon: Users, adminOnly: true },
 ];
 
 const statusOrder = ["pendente", "confirmado", "em_preparacao", "pronto", "pago"];
@@ -43,8 +48,14 @@ export default function Admin() {
   const [showProductForm, setShowProductForm] = useState(false);
   const [newOrderAlert, setNewOrderAlert] = useState(false);
   const { settings } = useBarSettings();
+  const { user, logout } = useAuth();
   const ordersRef = useRef([]);
   const knownIdsRef = useRef(new Set());
+
+  // Tabs visíveis: filtra "adminOnly" se o user não for admin.
+  // Como RequireAuth já bloqueia /admin para não-admins, em prática
+  // o user aqui é sempre admin — mas mantemos o filtro por segurança.
+  const tabs = ALL_TABS.filter((t) => !t.adminOnly || user?.role === "admin");
 
   const loadOrders = useCallback(async () => {
     try {
@@ -137,12 +148,32 @@ export default function Admin() {
         ) : (
           <Wine className="w-5 h-5 text-primary flex-shrink-0" />
         )}
-        <div>
+        <div className="flex-1 min-w-0">
           <p className="text-primary text-xs font-semibold tracking-widest uppercase leading-none mb-0.5">
             {settings.bar_name || "Bar Nobre"}
           </p>
           <h1 className="font-playfair font-bold text-lg leading-none">Gestão</h1>
         </div>
+        {/* User info + logout */}
+        {user && (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="text-right hidden sm:block">
+              <p className="text-[10px] text-muted-foreground leading-none mb-0.5">
+                {user.email}
+              </p>
+              <p className="text-[9px] uppercase tracking-wider font-medium text-primary leading-none">
+                {user.role}
+              </p>
+            </div>
+            <button
+              onClick={() => logout()}
+              title="Terminar sessão"
+              className="w-9 h-9 rounded-full bg-destructive/10 flex items-center justify-center hover:bg-destructive/20 transition-colors"
+            >
+              <LogOut className="w-4 h-4 text-destructive" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Tabs — horizontal scroll on mobile */}
@@ -344,6 +375,9 @@ export default function Admin() {
 
         {/* QR TAB */}
         {tab === "qr" && <QRCodesTab baseUrl={baseUrl} />}
+
+        {/* USERS TAB — só visível para admin (filtro em `tabs` acima) */}
+        {tab === "users" && <UsersPanel />}
       </div>
 
       <AnimatePresence>

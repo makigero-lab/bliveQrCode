@@ -2,19 +2,26 @@
 // -------------------------------------------------------------
 // Inicialização do Firebase para o projeto bliveQrCode.
 //
-// Substitui completamente o antigo cliente Base44. Expõe:
-//   - app       : instância do Firebase App
-//   - db        : instância do Firestore
+// Expõe:
+//   - app  : instância do Firebase App
+//   - db   : instância do Firestore
+//   - auth : instância do Firebase Auth
 //
-// As regras de segurança do Firestore devem permitir leitura e
-// escrita públicas (ou autenticadas) para as coleções usadas:
-//   - products  (catálogo de produtos)
-//   - orders    (pedidos)
-//   - settings  (configuração do bar — documento único, id "bar")
+// As regras de segurança do Firestore devem permitir:
+//   - products: leitura pública; escrita só para admins
+//   - orders  : leitura/escrita pública (clientes não autenticados
+//               enviam pedidos; staff/admin lêem e fecham)
+//   - settings: leitura pública; escrita só para admins
+//   - tables  : leitura pública; escrita só para admins
+//   - users   : leitura/escrita só para admins
+//
+// Recomenda-se ativar Email/Password no Firebase Console →
+// Authentication → Sign-in method.
 // -------------------------------------------------------------
 
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBMqbxgLDtmi1AhF0DC41a7UO39vczy0cs",
@@ -28,5 +35,6 @@ const firebaseConfig = {
 
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
+export const auth = getAuth(app);
 
 export default app;

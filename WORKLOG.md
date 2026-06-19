@@ -961,3 +961,198 @@ delete) para diagnóstico, com prefixos `[Staff][open]` e
   `tab_status: closed → open`).
 - Considerar deletar pedidos antigos do histórico após N dias
   para não inflar a coleção `orders`.
+
+---
+
+## 2026-06-20 — Auth real + QR codes seguros + Gestão de utilizadores
+
+**Tarefas executadas**
+
+1. **QR Codes seguros** — cada mesa tem um ID aleatório na coleção
+   `tables`; o `/menu` valida o `?m=<id>` no Firestore.
+2. **Firebase Auth real** — substitui o bypass demo; Email/Password
+   com `onAuthStateChanged` + role guardada na coleção `users`.
+3. **Gestão de utilizadores no Admin** — novo separador
+   "Utilizadores" (só admin) para criar/listar/apagar contas.
+
+### 1. QR Codes Seguros (coleção `tables`)
+
+**`src/lib/firebase.js`** — adicionado `getAuth` para suportar
+Firebase Auth. Agora exporta `app`, `db`, `auth`.
+
+**`src/lib/db.js`** — novas funções:
+- `generateTableId()` — hash aleatório de 8 chars [A-Za-z0-9].
+- `createTable(tableNumber)` — cria doc em `tables/{id}` com
+  `{table_number, created_date}`. ID gerado client-side.
+- `getTableByMid(mid)` — lê uma mesa pelo ID (usado pelo `/menu`
+  para validar `?m=`).
+- `listTables()` — lista todas as mesas ordenadas por número.
+- `deleteTable(mid)` — apaga mesa (QR deixa de funcionar).
+- `subscribeTables(callback)` — `onSnapshot` em tempo real.
+
+**`src/components/admin/QRCodesTab.jsx`** — reescrito por completo:
+- Subscreve `subscribeTables` em vez de gerar IDs locais.
+- Botão "Adicionar mesa" pede o número (input de texto) →
+  `createTable`.
+- Cada QR gera URL `/menu?m=<id>` (não mais `?mesa=N`).
+- Botão de apagar mesa com confirmação.
+- Info box explica como funciona a segurança.
+
+**`src/pages/Menu.jsx`** — reescrita da lógica de leitura do URL:
+- Lê `?m=<id>` primeiro. Se existir, consulta `getTableByMid(mid)`
+  no Firestore. Se válido → mostra menu com a `table_number`
+  correspondente. Se inválido → **ecrã "Mesa Inválida"** com
+  ícone vermelho.
+- Fallback legacy: aceita `?mesa=N` ou `?table=N` com aviso
+  amarelo no topo (QR code desatualizado).
+- Sem nenhum parâmetro → bloqueia com "Mesa Inválida".
+- Estado: `loading` → `valid` → menu normal; ou `loading` →
+  `invalid` → ecrã de erro.
+
+### 2. Firebase Auth Real
+
+**`src/lib/AuthContext.jsx`** — reescrito por completo (remove
+bypass demo):
+- Usa `onAuthStateChanged(auth, ...)` para subscrever o estado de
+  auth.
+- Após login, lê o perfil do utilizador em `users/{uid}` via
+  `getUserProfile(uid)` para obter a `role`.
+- Se utilizador não tem perfil em `users/` → signOut automático +
+  erro "user_not_registered".
+- Métodos: `login(email, password)`, `logout()`, `createUser(email,
+  password, role)` (usado pelo UsersPanel).
+- Estado exposto: `user` ({uid, email, role}), `isAuthenticated`,
+  `isLoadingAuth`, `authChecked`, `authError`.
+
+**`src/components/RequireAuth.jsx`** — reescrito por completo:
+- Props: `requireRole = "staff" | "admin"`.
+- Mostra spinner enquanto `isLoadingAuth || !authChecked`.
+- Se não autenticado → redireciona para `/login`.
+- Se `requireRole === "admin"` e user não é admin → redireciona
+  para `/staff` com ecrã "Acesso restrito".
+
+**`src/pages/Login.jsx`** — nova página:
+- Form email + password.
+- Chama `login()` do AuthContext.
+- Em sucesso → `navigate("/admin" ou "/staff")` conforme a role.
+- Tradução de erros Firebase Auth para PT-PT (auth/invalid-
+  credential, auth/configuration-not-found, etc.).
+
+**`src/App.jsx`** — atualizado:
+- Nova rota `/login` (redirect para `/admin` ou `/staff` se já
+  autenticado).
+- `<RequireAuth requireRole="admin">` em `/admin`.
+- `<RequireAuth requireRole="staff">` em `/staff`.
+- Spinner global enquanto auth não está checked.
+
+### 3. Gestão de Utilizadores (coleção `users`)
+
+**`src/lib/db.js`** — novas funções:
+- `getUserProfile(uid)` — lê perfil de um user por uid.
+- `setUserProfile(uid, {email, role})` — cria/substitui perfil.
+- `listUsers()` — lista todos (admins primeiro).
+- `subscribeUsers(callback)` — `onSnapshot` em tempo real.
+- `deleteUserProfile(uid)` — apaga perfil (conta Auth fica órfã).
+
+**`src/components/admin/UsersPanel.jsx`** — novo componente:
+- Subscreve `subscribeUsers` em tempo real.
+- Lista todos os utilizadores com avatar (coroa para admin,
+  ícone user para staff), email, role e UID abreviado.
+- Botão "Novo utilizador" abre formulário com email + password +
+  role (staff/admin) — botões com ícones Shield/Crown.
+- `createUserWithEmailAndPassword` cria a conta Auth; `setUserProfile`
+  cria o perfil no Firestore. Avisa que a sessão do admin é
+  terminada (limitação do SDK client-side).
+- Botão apagar (com confirmação dupla para admins). Impede
+  auto-apagar.
+- Info box com link para Firebase Console para apagar contas Auth
+  completamente.
+
+**`src/pages/Admin.jsx`** — atualizado:
+- Imports de `UsersPanel`, `useAuth`, ícones `Users`, `LogOut`.
+- `ALL_TABS` com flags `adminOnly: true|false`. Tabs "qr",
+  "settings" e "users" são adminOnly.
+- `tabs = ALL_TABS.filter(...)` conforme `user.role`.
+- Renderização do separador "users" → `<UsersPanel />`.
+- Header passa a mostrar email + role do user logado + botão
+  logout (ícone LogOut em vermelho).
+
+**`src/pages/Staff.jsx`** — atualizado:
+- Import de `useAuth` + ícone `LogOut`.
+- Header passa a ter botão logout no canto direito (a seguir ao
+  indicador Live).
+
+### 4. Documentação e artefactos
+
+- Build validado: `npm install` + `npm run build` OK.
+
+**Estado final**
+
+- Auth real via Firebase Auth (Email/Password). Sessão persistente
+  via IndexedDB.
+- Roles guardadas em `users/{uid}` no Firestore.
+- `/admin` só admin; `/staff` admin + staff; `/login` se não
+  autenticado.
+- QR codes usam IDs seguros (`?m=<id>`); `/menu` valida via
+  Firestore → bloqueia com "Mesa Inválida" se adulterado.
+- Admin tem separador "Utilizadores" para criar/apagar contas.
+
+**Setup necessário no Firebase Console**
+
+1. **Ativar Email/Password**: Authentication → Sign-in method →
+   Email/Password → Enable.
+2. **Criar o primeiro admin**: Authentication → Users → Add user
+   (email + password). Depois ir a Firestore → coleção `users` →
+   criar documento com id = uid do user, campos `{email, role:
+   "admin", created_date: agora}`.
+3. **Regras de segurança Firestore** (recomendadas):
+   ```
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       // Mesas: leitura pública (para /menu validar ?m=),
+       // escrita só admin
+       match /tables/{id} {
+         allow read: if true;
+         allow write: if request.auth != null &&
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+       }
+       // Users: leitura do próprio perfil OU admin; escrita só admin
+       match /users/{uid} {
+         allow read: if request.auth != null &&
+           (request.auth.uid == uid ||
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin");
+         allow write: if request.auth != null &&
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+       }
+       // Products: leitura pública; escrita só admin
+       match /products/{id} {
+         allow read: if true;
+         allow write: if request.auth != null &&
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+       }
+       // Orders: leitura só auth; escrita pública (clientes enviam)
+       match /orders/{id} {
+         allow read: if request.auth != null;
+         allow create: if true;
+         allow update, delete: if request.auth != null;
+       }
+       // Settings: leitura pública; escrita só admin
+       match /settings/{id} {
+         allow read: if true;
+         allow write: if request.auth != null &&
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+       }
+     }
+   }
+   ```
+
+**Limitações conhecidas**
+
+- Criar utilizadores no painel Admin termina a sessão do admin
+  atual (limitação do SDK client-side do Firebase Auth). O admin
+  precisa de voltar a fazer login. Para contornar, seria
+  necessário um backend com Firebase Admin SDK.
+- Apagar utilizadores remove apenas o perfil Firestore. A conta
+  Auth fica órfã (sem perfil → login falha). Para apagar
+  completamente, usar Firebase Console.
