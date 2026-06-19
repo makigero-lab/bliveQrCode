@@ -507,3 +507,72 @@ importados correspondem ao modelo da app (`name`, `description`,
 
 Alternativamente, o seed pode ser feito por CLI com
 `node scripts/seed-products.js` (mesmo catálogo, mesma lógica).
+
+---
+
+## 2026-06-20 — Botão "Apagar todos os produtos" no painel Admin
+
+**Tarefa**
+
+Adicionar um botão "Apagar todos os produtos" ao lado do botão
+"Importar Catálogo" no painel de Admin, para resets rápidos do
+catálogo no Firestore.
+
+**Trabalho realizado**
+
+1. **Criado `src/components/admin/ClearAllProductsButton.jsx`** —
+   componente React autónomo, espelho do `ImportCatalogButton` mas
+   para operação destrutiva. Características:
+   - Estado: `idle` / `deleting` / `done` / `error`.
+   - **Dupla confirmação**:
+     a) `window.confirm` inicial com texto explícito sobre a
+        irreversibilidade da operação.
+     b) `window.prompt` onde o utilizador tem de escrever `APAGAR`
+        em maiúsculas. Só assim a operação avança.
+   - Lê todos os documentos da coleção `products` via
+     `getDocs(collection(db,"products"))`.
+   - Apaga em lotes de 400 documentos via `writeBatch` (limite
+     Firestore é 500 ops/batch) para não estourar quota.
+   - Barra de progresso (X / N) vermelha durante a eliminação.
+   - Botão "Cancelar" para parar a meio (mantém o que já foi
+     apagado).
+   - Toast verde (sucesso) ou vermelho (erro) no fim, com contagem
+     de documentos apagados.
+   - Caso especial: se a coleção já estiver vazia, mostra mensagem
+     informativa em vez de erro.
+   - Callback `onCleared` para o `Admin.jsx` recarregar a lista
+     após a operação.
+
+2. **Integrado no `Admin.jsx`** — o botão aparece no separador
+   "Menu", lado a lado com o `ImportCatalogButton` numa grid de
+   2 colunas no desktop (1 coluna no mobile). Ambos os botões
+   passam `loadProducts` como callback para a lista se atualizar.
+
+3. **Estilo visual consistente com o ImportCatalogButton** —
+   caixa com borda tracejada, ícone à esquerda, título + descrição
+   no meio, botão de ação à direita. Diferença: usa vermelho
+   (`red-500/40`, `red-500/15`) em vez de rosa para sinalizar o
+   carácter destrutivo.
+
+4. **Build validado** — `npm install` + `npm run build` OK.
+
+**Estado final**
+
+- Dois botões de gestão de catálogo disponíveis no painel Admin →
+  separador Menu, lado a lado:
+  - **Importar Catálogo** (rosa) — popula o Firestore com 150
+    produtos do catálogo B'Live. Idempotente via `setDoc` com id
+    estável.
+  - **Apagar tudo** (vermelho) — remove TODOS os documentos da
+    coleção `products`. Dupla confirmação (dialog + prompt
+    "APAGAR").
+- Build OK.
+
+**Fluxo recomendado de reset do catálogo**
+
+1. Abrir `/admin` → separador Menu.
+2. Clicar em "Apagar tudo" → confirmar → escrever APAGAR.
+3. Aguardar a barra de progresso vermelha chegar ao fim.
+4. Clicar em "Importar Catálogo" para repopular com os 150
+   produtos atualizados (após editar `src/data/catalog.js` se
+   necessário).

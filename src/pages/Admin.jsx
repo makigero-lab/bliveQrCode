@@ -9,6 +9,7 @@ import QRCodesTab from "@/components/admin/QRCodesTab";
 import StockPanel from "@/components/admin/StockPanel";
 import AnalyticsPanel from "@/components/admin/AnalyticsPanel";
 import ImportCatalogButton from "@/components/admin/ImportCatalogButton";
+import ClearAllProductsButton from "@/components/admin/ClearAllProductsButton";
 import { useBarSettings } from "@/lib/BarSettingsContext";
 import {
   listProducts,
@@ -239,8 +240,11 @@ export default function Admin() {
               </button>
             </div>
 
-            {/* Importar Catálogo B'Live (lê src/data/catalog.js → Firestore) */}
-            <ImportCatalogButton onImported={loadProducts} />
+            {/* Ações de catálogo: Importar (esquerda) + Apagar tudo (direita) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <ImportCatalogButton onImported={loadProducts} />
+              <ClearAllProductsButton onCleared={loadProducts} />
+            </div>
 
             <div className="space-y-3">
               {products.map((p) => (
