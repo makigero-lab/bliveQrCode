@@ -118,7 +118,7 @@ Métodos de pagamento suportados (definidos em `PaymentModal.jsx`):
 - **Componentes UI**: baseados em shadcn/ui (Radix UI + Tailwind).
 - **Estado servidor**: React Query (`@tanstack/react-query`) está
   disponível mas pouco usado — a maior parte do estado vive nos
-  componentes e no Mock Client.
+  componentes e no Firestore (via `src/lib/db.js`).
 - **Idioma da UI**: Português europeu (PT-PT). Textos como "A enviar",
   "Adicionar", "Mesa", "Pronto", etc.
 
@@ -128,29 +128,37 @@ Métodos de pagamento suportados (definidos em `PaymentModal.jsx`):
 | --------- | --------------- | ------------------------------------------- |
 | `/`       | Não             | Redireciona internamente para o Menu.       |
 | `/menu`   | Não             | Página pública acedida via QR code.         |
-| `/staff`  | Sim (Mock)      | Em modo Mock, qualquer visitante passa.     |
-| `/admin`  | Sim (Mock)      | Em modo Mock, qualquer visitante passa.     |
+| `/staff`  | Bypass (demo)   | Em modo demo, qualquer visitante passa.     |
+| `/admin`  | Bypass (demo)   | Em modo demo, qualquer visitante passa.     |
 
-> ⚠️ Em modo Mock **não há proteção real**. Quando se ligar a um
-> backend, o `RequireAuth` deve ser atualizado para verificar a
-> sessão/scope do utilizador.
+> ⚠️ Em modo demo **não há proteção real**. Quando se quiser ativar
+> auth real (Firebase Auth), o `RequireAuth` deve ser atualizado
+> para verificar a sessão/scope do utilizador, e as regras de
+> segurança do Firestore devem restringir a escrita a admins.
 
-## 10. Mock Data — gerir dados
+## 10. Firestore — gerir dados
 
-Para limpar todos os dados Mock e voltar à semente inicial, abrir a
-consola do browser e executar:
+Os dados vivem no Firestore do projeto Firebase `autocell-535c2`.
+Para inspecionar / gerir os dados, usar a consola do Firebase:
 
-```js
-Object.keys(localStorage)
-  .filter((k) => k.startsWith("blive_"))
-  .forEach((k) => localStorage.removeItem(k));
-location.reload();
+- Coleção `products`: catálogo de produtos.
+- Coleção `orders`: pedidos.
+- Coleção `settings` (doc id `bar`): configuração do bar.
+
+Não há semente automática — a base de dados começa vazia. Para
+preencher com dados de demonstração, usar o separador "Menu" do
+painel Admin e adicionar produtos manualmente.
+
+Regras de segurança recomendadas para a demo (Firebase Console →
+Firestore → Rules):
+
 ```
-
-Para inspecionar os dados atuais:
-
-```js
-console.table(JSON.parse(localStorage.getItem("blive_Product")));
-console.table(JSON.parse(localStorage.getItem("blive_Order")));
-console.log(JSON.parse(localStorage.getItem("blive_BarSettings")));
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;  // ⚠️ Demo apenas — restringir em produção
+    }
+  }
+}
 ```

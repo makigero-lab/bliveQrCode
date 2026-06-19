@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { X, CreditCard, Smartphone, Hash, Banknote, CheckCircle2, Heart } from "lucide-react";
 import { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { createOrder } from "@/lib/db";
 import { useBarSettings } from "@/lib/BarSettingsContext";
 
 const ALL_METHODS = [
@@ -37,24 +37,29 @@ export default function PaymentModal({ items, total, tableNumber, onClose, onOrd
   const handleConfirm = async () => {
     if (!method) return;
     setLoading(true);
-    await base44.entities.Order.create({
-      table_number: tableNumber,
-      items: items.map((i) => ({
-        product_id: i.id,
-        product_name: i.name,
-        quantity: i.quantity,
-        unit_price: i.price,
-        total: i.total,
-      })),
-      total_amount: grandTotal,
-      tip_amount: tipAmount,
-      status: "pendente",
-      payment_method: method,
-      notes: notes || undefined,
-    });
-    setLoading(false);
-    setSuccess(true);
-    setTimeout(() => onOrderPlaced(), 2500);
+    try {
+      await createOrder({
+        table_number: tableNumber,
+        items: items.map((i) => ({
+          product_id: i.id,
+          product_name: i.name,
+          quantity: i.quantity,
+          unit_price: i.price,
+          total: i.total,
+        })),
+        total_amount: grandTotal,
+        tip_amount: tipAmount,
+        status: "pendente",
+        payment_method: method,
+        notes: notes || undefined,
+      });
+    } catch (err) {
+      console.error("[PaymentModal] Erro ao confirmar pedido:", err);
+    } finally {
+      setLoading(false);
+      setSuccess(true);
+      setTimeout(() => onOrderPlaced(), 2500);
+    }
   };
 
   return (

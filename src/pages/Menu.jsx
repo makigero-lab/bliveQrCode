@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import { base44 } from "@/api/base44Client";
 import { Wine } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import CategoryTabs from "@/components/menu/CategoryTabs";
 import ProductCard from "@/components/menu/ProductCard";
 import CartDrawer from "@/components/menu/CartDrawer";
 import { useBarSettings } from "@/lib/BarSettingsContext";
+import { listAvailableProducts } from "@/lib/db";
 
 export default function Menu() {
   const [products, setProducts] = useState([]);
@@ -20,10 +20,24 @@ export default function Menu() {
   const { settings } = useBarSettings();
 
   useEffect(() => {
-    base44.entities.Product.filter({ available: true }).then((data) => {
-      setProducts(data);
-      setLoading(false);
-    });
+    let cancelled = false;
+
+    listAvailableProducts()
+      .then((data) => {
+        if (cancelled) return;
+        setProducts(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error("[Menu] Falha ao carregar produtos:", err);
+        if (cancelled) return;
+        setProducts([]);
+        setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const filtered = category === "todos"

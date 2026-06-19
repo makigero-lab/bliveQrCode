@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { base44 } from "@/api/base44Client";
 import { Plus, RefreshCw, LayoutGrid, ClipboardList, QrCode, Trash2, Pencil, Wine, BarChart2, Settings, Wifi, PackageOpen, LineChart } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import OrderCard from "@/components/admin/OrderCard";
@@ -10,6 +9,14 @@ import QRCodesTab from "@/components/admin/QRCodesTab";
 import StockPanel from "@/components/admin/StockPanel";
 import AnalyticsPanel from "@/components/admin/AnalyticsPanel";
 import { useBarSettings } from "@/lib/BarSettingsContext";
+import {
+  listProducts,
+  listOrders,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+  subscribeOrders,
+} from "@/lib/db";
 
 const tabs = [
   { id: "orders", label: "Pedidos", icon: ClipboardList },
@@ -33,32 +40,60 @@ export default function Admin() {
   const [newOrderAlert, setNewOrderAlert] = useState(false);
   const { settings } = useBarSettings();
   const ordersRef = useRef([]);
+  const knownIdsRef = useRef(new Set());
 
   const loadOrders = useCallback(async () => {
-    const data = await base44.entities.Order.list("-created_date", 500);
-    setOrders(data);
-    ordersRef.current = data;
-    setLoading(false);
+    try {
+      const data = await listOrders(500);
+      setOrders(data);
+      ordersRef.current = data;
+    } catch (err) {
+      console.error("[Admin] Falha ao carregar pedidos:", err);
+      setOrders([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   const loadProducts = useCallback(async () => {
-    const data = await base44.entities.Product.list();
-    setProducts(data);
+    try {
+      const data = await listProducts();
+      setProducts(data);
+    } catch (err) {
+      console.error("[Admin] Falha ao carregar produtos:", err);
+      setProducts([]);
+    }
   }, []);
 
   useEffect(() => {
     loadOrders();
     loadProducts();
 
-    // Real-time subscription via WebSocket
-    const unsubscribe = base44.entities.Order.subscribe((event) => {
-      if (event.type === "create") {
-        setOrders((prev) => [event.data, ...prev]);
+    // Subscrição em tempo real ao Firestore (onSnapshot).
+    // A query está ordenada por created_date desc dentro de
+    // `subscribeOrders`.
+    const unsubscribe = subscribeOrders((event) => {
+      if (event.type === "snapshot") {
+        // Carregamento inicial — substitui tudo
+        setOrders(event.data);
+        ordersRef.current = event.data;
+        event.data.forEach((o) => knownIdsRef.current.add(o.id));
+        setLoading(false);
+      } else if (event.type === "create") {
+        if (knownIdsRef.current.has(event.id)) return;
+        knownIdsRef.current.add(event.id);
+        setOrders((prev) => {
+          if (prev.some((o) => o.id === event.id)) return prev;
+          return [event.data, ...prev];
+        });
         setNewOrderAlert(true);
         setTimeout(() => setNewOrderAlert(false), 4000);
       } else if (event.type === "update") {
-        setOrders((prev) => prev.map((o) => o.id === event.id ? event.data : o));
+        setOrders((prev) =>
+          prev.map((o) => (o.id === event.id ? event.data : o))
+        );
       } else if (event.type === "delete") {
+        knownIdsRef.current.delete(event.id);
         setOrders((prev) => prev.filter((o) => o.id !== event.id));
       }
     });
@@ -69,14 +104,22 @@ export default function Admin() {
   const activeOrders = orders.filter((o) => o.status !== "pago");
   const doneOrders = orders.filter((o) => o.status === "pago");
 
-  const deleteProduct = async (id) => {
-    await base44.entities.Product.delete(id);
-    loadProducts();
+  const handleDeleteProduct = async (id) => {
+    try {
+      await deleteProduct(id);
+      await loadProducts();
+    } catch (err) {
+      console.error("[Admin] Erro ao apagar produto:", err);
+    }
   };
 
   const toggleAvailability = async (product) => {
-    await base44.entities.Product.update(product.id, { available: !product.available });
-    loadProducts();
+    try {
+      await updateProduct(product.id, { available: !product.available });
+      await loadProducts();
+    } catch (err) {
+      console.error("[Admin] Erro ao atualizar disponibilidade:", err);
+    }
   };
 
   const baseUrl = window.location.origin + window.location.pathname.replace("/admin", "/menu");
@@ -225,7 +268,7 @@ export default function Admin() {
                     <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
                   </button>
                   <button
-                    onClick={() => deleteProduct(p.id)}
+                    onClick={() => handleDeleteProduct(p.id)}
                     className="w-8 h-8 rounded-xl bg-destructive/10 flex items-center justify-center hover:bg-destructive/20"
                   >
                     <Trash2 className="w-3.5 h-3.5 text-destructive" />

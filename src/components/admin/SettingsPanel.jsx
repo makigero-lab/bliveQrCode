@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { Upload, Palette, Type, Image, Save, CheckCircle2 } from "lucide-react";
 import { useBarSettings } from "@/lib/BarSettingsContext";
-import { base44 } from "@/api/base44Client";
+import { uploadFile } from "@/lib/db";
 
 const PRESET_COLORS = [
   { label: "B'Live", value: "#E91E8C" },
@@ -35,9 +35,14 @@ export default function SettingsPanel() {
     const file = e.target.files[0];
     if (!file) return;
     setUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    set("logo_url", file_url);
-    setUploading(false);
+    try {
+      const { file_url } = await uploadFile({ file });
+      set("logo_url", file_url);
+    } catch (err) {
+      console.error("[SettingsPanel] Erro no upload do logótipo:", err);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleSave = async () => {

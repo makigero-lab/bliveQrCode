@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
-import { base44 } from "@/api/base44Client";
 import { ChevronRight, MessageSquare } from "lucide-react";
+import { listProducts, updateOrder, updateProduct } from "@/lib/db";
 
 const statusColors = {
   pendente: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
@@ -33,21 +33,26 @@ export default function OrderCard({ order, onUpdate }) {
     const next = nextStatus[order.status];
     if (!next) return;
 
-    if (order.status === "pendente" && next === "confirmado") {
-      const products = await base44.entities.Product.list();
-      for (const item of (order.items || [])) {
-        const product = products.find((p) => p.id === item.product_id);
-        if (product && product.stock_enabled && product.stock > 0) {
-          const newStock = Math.max(0, product.stock - item.quantity);
-          const updates = { stock: newStock };
-          if (newStock === 0) updates.available = false;
-          await base44.entities.Product.update(product.id, updates);
+    try {
+      if (order.status === "pendente" && next === "confirmado") {
+        // Decrementa stock dos produtos envolvidos no pedido
+        const products = await listProducts();
+        for (const item of order.items || []) {
+          const product = products.find((p) => p.id === item.product_id);
+          if (product && product.stock_enabled && product.stock > 0) {
+            const newStock = Math.max(0, product.stock - item.quantity);
+            const updates = { stock: newStock };
+            if (newStock === 0) updates.available = false;
+            await updateProduct(product.id, updates);
+          }
         }
       }
-    }
 
-    await base44.entities.Order.update(order.id, { status: next });
-    onUpdate();
+      await updateOrder(order.id, { status: next });
+      if (onUpdate) onUpdate();
+    } catch (err) {
+      console.error("[OrderCard] Erro ao avançar pedido:", err);
+    }
   };
 
   return (
@@ -65,7 +70,9 @@ export default function OrderCard({ order, onUpdate }) {
           </span>
         </div>
         <p className="text-muted-foreground text-xs">
-          {new Date(order.created_date).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}
+          {order.created_date
+            ? new Date(order.created_date).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })
+            : ""}
         </p>
       </div>
 

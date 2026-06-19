@@ -1,15 +1,21 @@
 import { useState, useEffect, useCallback } from "react";
-import { base44 } from "@/api/base44Client";
 import { Plus, Minus, PackageX } from "lucide-react";
+import { listProducts, updateProduct } from "@/lib/db";
 
 export default function StockPanel() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    const data = await base44.entities.Product.list();
-    setProducts(data.filter((p) => p.stock_enabled));
-    setLoading(false);
+    try {
+      const data = await listProducts();
+      setProducts(data.filter((p) => p.stock_enabled));
+    } catch (err) {
+      console.error("[StockPanel] Erro ao carregar produtos:", err);
+      setProducts([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -19,8 +25,12 @@ export default function StockPanel() {
     const updates = { stock: newStock };
     if (newStock === 0) updates.available = false;
     if (newStock > 0 && !product.available) updates.available = true;
-    await base44.entities.Product.update(product.id, updates);
-    load();
+    try {
+      await updateProduct(product.id, updates);
+      await load();
+    } catch (err) {
+      console.error("[StockPanel] Erro ao ajustar stock:", err);
+    }
   };
 
   const setStock = async (product, value) => {
@@ -28,8 +38,12 @@ export default function StockPanel() {
     const updates = { stock: newStock };
     if (newStock === 0) updates.available = false;
     if (newStock > 0) updates.available = true;
-    await base44.entities.Product.update(product.id, updates);
-    load();
+    try {
+      await updateProduct(product.id, updates);
+      await load();
+    } catch (err) {
+      console.error("[StockPanel] Erro ao definir stock:", err);
+    }
   };
 
   if (loading) return (

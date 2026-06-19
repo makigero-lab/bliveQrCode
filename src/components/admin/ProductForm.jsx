@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { X } from "lucide-react";
-import { base44 } from "@/api/base44Client";
+import { createProduct, updateProduct } from "@/lib/db";
 
-const categories = ["bebidas", "cocktails", "comida", "sobremesas"];
+const categories = ["bebidas", "cocktails", "comida", "sobremesas", "shisha"];
 
 export default function ProductForm({ product, onClose, onSaved }) {
   const [form, setForm] = useState(product || {
@@ -15,14 +15,19 @@ export default function ProductForm({ product, onClose, onSaved }) {
 
   const handleSave = async () => {
     setLoading(true);
-    const data = { ...form, price: parseFloat(form.price) || 0 };
-    if (product?.id) {
-      await base44.entities.Product.update(product.id, data);
-    } else {
-      await base44.entities.Product.create(data);
+    try {
+      const data = { ...form, price: parseFloat(form.price) || 0 };
+      if (product?.id) {
+        await updateProduct(product.id, data);
+      } else {
+        await createProduct(data);
+      }
+    } catch (err) {
+      console.error("[ProductForm] Erro ao guardar produto:", err);
+    } finally {
+      setLoading(false);
+      onSaved();
     }
-    setLoading(false);
-    onSaved();
   };
 
   return (

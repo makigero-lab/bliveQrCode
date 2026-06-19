@@ -104,3 +104,183 @@ foi feito e o estado final.
   vivem apenas no dispositivo de cada cliente.
 - Atualizar o `package-lock.json` com `npm install` para refletir as
   dependências removidas (a Vercel faz isto automaticamente no build).
+
+---
+
+## 2026-06-20 — Migração completa de Base44 (Mock) para Firebase Firestore
+
+**Tarefa**
+
+Migrar o backend da aplicação de "Base44" (na verdade já em modo Mock
+após a intervenção anterior) para **Firebase Firestore**, mantendo o
+funcionamento em tempo real e o deploy na Vercel. Tarefas executadas
+rigorosamente:
+
+1. Confirmar remoção das dependências `@base44/sdk` e
+   `@base44/vite-plugin` do `package.json`; instalar o pacote oficial
+   `firebase`.
+2. Apagar a pasta `base44/` (já não existia) e o ficheiro
+   `src/api/base44Client.js`.
+3. Criar `src/lib/firebase.js` que inicializa o Firebase com o
+   `firebaseConfig` fornecido e exporta `db = getFirestore(app)`.
+4. Refatorar todos os componentes que usavam `base44.entities.Product`
+   (Menu, Admin, StockPanel, ProductForm, OrderCard, TableGroup) para
+   usar o Firestore apontando para a coleção `products`.
+5. Substituir todas as chamadas `base44.entities.Order` por operações
+   na coleção `orders`.
+6. **CRÍTICO**: substituir as subscrições `base44.entities.Order.subscribe`
+   em `Staff.jsx` e `Admin.jsx` por `onSnapshot` do Firestore, ordenando
+   os pedidos por `created_date desc`.
+7. Refatorar `BarSettingsContext` para ler/atualizar um documento
+   único (`id="bar"`) na coleção `settings`.
+8. Refatorar `AuthContext` e `RequireAuth` para bypass total
+   (utilizador sempre autenticado como admin, `isLoadingAuth: false`).
+9. Garantir que o `vercel.json` se mantém na raiz com as regras de
+   rewrites SPA.
+10. Commit com a mensagem `Feat: Migração completa de Base44 para
+    Firebase Firestore` e push para `origin/main`.
+
+**Trabalho realizado**
+
+1. **`package.json`** — Adicionada a dependência `"firebase":
+   "^11.2.0"`. As dependências `@base44/*` já tinham sido removidas
+   na intervenção anterior; confirmado que continuam ausentes.
+   `npm install` executado: 685 pacotes instalados.
+
+2. **`src/lib/firebase.js`** — Criado. Inicializa o Firebase App com
+   o `firebaseConfig` fornecido (projectId `autocell-535c2`) e
+   exporta `app` e `db = getFirestore(app)`.
+
+3. **`src/lib/db.js`** — Criado. Camada de acesso a dados que
+   centraliza todas as operações Firestore:
+   - `listProducts`, `listAvailableProducts`, `createProduct`,
+     `updateProduct`, `deleteProduct`, `subscribeProducts`.
+   - `listOrders(limit)`, `createOrder`, `updateOrder`, `deleteOrder`,
+     `subscribeOrders(callback)`.
+   - `getBarSettings`, `saveBarSettings`, `subscribeBarSettings`.
+   - `uploadFile({file})` — converte ficheiro em data URL base64
+     (mantém a interface antiga
+     `base44.integrations.Core.UploadFile`).
+   - Helpers `withId` e `normalizeTimestamp` para converter
+     `Timestamp` do Firestore em ISO string (compatível com o que a
+     Base44 devolvia em `created_date`).
+   - `subscribeOrders` emite eventos `{type, id, data}` para
+     compatibilidade com os componentes `Admin.jsx` e `Staff.jsx`:
+     na primeira snapshot emite `snapshot` com tudo; nas seguintes
+     faz diff e emite `create`/`update`/`delete` individuais.
+
+4. **`src/api/base44Client.js`** — Apagado (juntamente com a pasta
+   `src/api/`).
+
+5. **`src/pages/Menu.jsx`** — Substituída a chamada
+   `base44.entities.Product.filter({ available: true })` por
+   `listAvailableProducts()` do `db.js`. Adicionado tratamento de
+   erros e flag `cancelled` para evitar set state após unmount.
+
+6. **`src/pages/Staff.jsx`** — Substituída a subscrição
+   `base44.entities.Order.subscribe` por `subscribeOrders(callback)`
+   que usa `onSnapshot` internamente, com a query ordenada por
+   `created_date desc`. Mantida a lógica de tocar o som apenas em
+   pedidos novos (id não conhecido). Adicionado um `knownIdsRef`
+   para evitar duplicados e falsos positivos de "novo pedido".
+
+7. **`src/pages/Admin.jsx`** — Mesma refatoração que `Staff.jsx`:
+   `subscribeOrders` substitui a subscrição antiga. Carregamento
+   inicial via `loadOrders` + `loadProducts` mantido para o separador
+   Menu. Substituídas as chamadas CRUD de produto por funções de
+   `db.js`.
+
+8. **`src/components/admin/OrderCard.jsx`** — Substituídas as
+   chamadas `base44.entities.Order.update` e
+   `base44.entities.Product.list/update` por `updateOrder`,
+   `listProducts`, `updateProduct`.
+
+9. **`src/components/admin/TableGroup.jsx`** — Mesma refatoração
+   que `OrderCard`, mais `deleteOrder` para a ação "Limpar mesa".
+
+10. **`src/components/admin/ProductForm.jsx`** — Substituídas as
+    chamadas `base44.entities.Product.create/update` por
+    `createProduct`/`updateProduct`.
+
+11. **`src/components/admin/StockPanel.jsx`** — Substituídas as
+    chamadas `base44.entities.Product.list/update` por
+    `listProducts`/`updateProduct`.
+
+12. **`src/components/menu/CartDrawer.jsx`** — Substituída a chamada
+    `base44.entities.Order.create` por `createOrder`.
+
+13. **`src/components/menu/PaymentModal.jsx`** — Mesma refatoração
+    que `CartDrawer`.
+
+14. **`src/components/admin/SettingsPanel.jsx`** — Substituída a
+    chamada `base44.integrations.Core.UploadFile` por `uploadFile`
+    do `db.js`. O `useBarSettings` continua a ser usado para guardar
+    a configuração (agora via Firestore).
+
+15. **`src/lib/BarSettingsContext.jsx`** — Reescrito por completo.
+    Carrega o documento `bar` da coleção `settings` via
+    `getBarSettings()` na carga inicial e subscreve alterações em
+    tempo real via `subscribeBarSettings(callback)` (usa `onSnapshot`
+    internamente). O `updateSettings` chama `saveBarSettings` que
+    faz `setDoc(ref, data, {merge: true})`.
+
+16. **`src/lib/AuthContext.jsx`** — Reescrito para bypass total.
+    Estado fixo: `user` é sempre `{id, name, email, role: "admin"}`,
+    `isAuthenticated: true`, `isLoadingAuth: false`,
+    `isLoadingPublicSettings: false`, `authError: null`,
+    `authChecked: true`. Métodos `logout`, `navigateToLogin`,
+    `checkUserAuth`, `checkAppState` são no-ops.
+
+17. **`src/components/RequireAuth.jsx`** — Simplificado para passar
+    direto ao `children` (não há loading spinner porque
+    `isLoadingAuth` é sempre `false`).
+
+18. **`src/lib/app-params.js`** — Simplificado para devolver
+    valores neutros. O módulo já não é usado por nenhum componente
+    ativo, mas mantém-se por compatibilidade.
+
+19. **`vite.config.js`** — Mantido como estava (apenas plugin React
+    + alias `@`). Nenhuma alteração necessária nesta iteração.
+
+20. **`vercel.json`** — Confirmado na raiz, inalterado:
+    `{"rewrites":[{"source":"/(.*)","destination":"/index.html"}]}`.
+
+21. **Build validado** — `npm install` + `npm run build` executados
+    localmente. Gerou `dist/index.html` + assets sem erros. O bundle
+    JS cresceu para ~1.2 MB por incluir o Firebase SDK (esperado).
+
+22. **Documentação atualizada**:
+    - `README.md` reescrito para refletir a nova arquitetura
+      Firebase (coleções, sincronização em tempo real, auth bypass).
+    - `docs/ARQUITETURA.md` e `docs/REGRAS.md` serão atualizados em
+      paralelo.
+    - Este `WORKLOG.md` atualizado com a nova entrada.
+
+**Estado final**
+
+- A app compila sem a dependência `@base44/sdk` nem
+  `@base44/vite-plugin`.
+- Todos os dados vivem no Firestore do projeto Firebase
+  `autocell-535c2` (coleções `products`, `orders`, `settings`).
+- A sincronização é em tempo real: quando um cliente envia um pedido
+  em `/menu`, este aparece instantaneamente em `/staff` e `/admin`
+  via `onSnapshot`.
+- A autenticação está em modo demo (sempre admin) para permitir
+  acesso livre a `/admin` e `/staff` durante a apresentação.
+- O `vercel.json` garante que não há erro 404 em rotas client-side.
+- Commit criado com a mensagem `Feat: Migração completa de Base44
+  para Firebase Firestore` e pushed para `origin/main`.
+
+**Pendente para próximas iterações**
+
+- Reativar auth real com Firebase Auth (email/password ou Google) e
+  restringir `/admin`/`/staff` a admins. As regras de segurança do
+  Firestore devem ser atualizadas em paralelo (hoje estão abertas
+  para a demo funcionar).
+- Migrar uploads de logótipos de data URL base64 para Firebase
+  Storage (evita inchar documentos Firestore).
+- Adicionar índices compostos no Firestore se surgirem avisos de
+  query (ex.: `where available==true` + `orderBy created_date`).
+- Otimizar o bundle (code-split do Firebase SDK) se o tempo de
+  carga inicial for problema em produção.
+

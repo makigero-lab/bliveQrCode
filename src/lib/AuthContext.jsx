@@ -1,22 +1,24 @@
-import React, { createContext, useState, useContext, useEffect } from "react";
+import React, { createContext, useContext } from "react";
 
 /**
- * AuthContext (modo Mock)
+ * AuthContext (bypass para demonstração)
  * -----------------------------------------------------------------
- * Versão simplificada do AuthContext original. A versão antiga fazia
- * uma chamada HTTP a `/api/apps/public/prod/public-settings/by-id/...`
- * que dependia do backend Base44 e crashava em produção (Vercel).
+ * Para evitar problemas de bloqueio na apresentação, ignoramos
+ * completamente a autenticação. O utilizador é sempre considerado
+ * autenticado como admin (role: "admin"), com isLoadingAuth:false
+ * desde o primeiro render.
  *
- * Em modo Mock não há autenticação real: consideramos o utilizador
- * sempre autenticado como admin local, de forma a que as rotas
- * protegidas (`/admin`, `/staff`) continuem acessíveis.
+ * Isto permite que /admin e /staff sejam acedidos sem qualquer
+ * friction. Se no futuro for necessário reintroduzir auth real
+ * (Firebase Auth, Supabase, etc.), basta reimplementar os métodos
+ * `logout`, `navigateToLogin` e o estado `user`.
  * -----------------------------------------------------------------
  */
 const AuthContext = createContext();
 
 const MOCK_USER = {
-  id: "mock-user-1",
-  name: "Utilizador Local",
+  id: "demo-admin",
+  name: "Administrador (demo)",
   email: "admin@blive.local",
   role: "admin",
 };
@@ -29,80 +31,27 @@ const MOCK_PUBLIC_SETTINGS = {
 };
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
-  const [isLoadingPublicSettings, setIsLoadingPublicSettings] = useState(true);
-  const [authError, setAuthError] = useState(null);
-  const [authChecked, setAuthChecked] = useState(false);
-  const [appPublicSettings, setAppPublicSettings] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const init = async () => {
-      // Simula latência mínima para o spinner de loading aparecer.
-      await new Promise((r) => setTimeout(r, 80));
-
-      if (cancelled) return;
-
-      setAppPublicSettings(MOCK_PUBLIC_SETTINGS);
-      setIsLoadingPublicSettings(false);
-
-      setUser(MOCK_USER);
-      setIsAuthenticated(true);
-      setAuthChecked(true);
-      setIsLoadingAuth(false);
-    };
-
-    init();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const checkUserAuth = async () => {
-    setUser(MOCK_USER);
-    setIsAuthenticated(true);
-    setAuthChecked(true);
-    setIsLoadingAuth(false);
-  };
-
-  const checkAppState = async () => {
-    setAppPublicSettings(MOCK_PUBLIC_SETTINGS);
-    setIsLoadingPublicSettings(false);
-    await checkUserAuth();
-  };
-
-  const logout = () => {
-    // Em modo Mock o logout é no-op: o utilizador continua autenticado.
-    setUser(null);
-    setIsAuthenticated(false);
-  };
-
-  const navigateToLogin = () => {
-    // No-op em modo Mock.
+  // Estado fixo — sempre autenticado como admin, sem loading.
+  const value = {
+    user: MOCK_USER,
+    isAuthenticated: true,
+    isLoadingAuth: false,
+    isLoadingPublicSettings: false,
+    authError: null,
+    appPublicSettings: MOCK_PUBLIC_SETTINGS,
+    authChecked: true,
+    logout: () => {
+      // no-op em modo demo
+    },
+    navigateToLogin: () => {
+      // no-op em modo demo
+    },
+    checkUserAuth: async () => {},
+    checkAppState: async () => {},
   };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isAuthenticated,
-        isLoadingAuth,
-        isLoadingPublicSettings,
-        authError,
-        appPublicSettings,
-        authChecked,
-        logout,
-        navigateToLogin,
-        checkUserAuth,
-        checkAppState,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
+    <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
   );
 };
 

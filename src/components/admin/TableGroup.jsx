@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { base44 } from "@/api/base44Client";
 import { ChevronDown, ChevronUp, Trash2, MessageSquare, ChevronRight } from "lucide-react";
+import { listProducts, updateOrder, updateProduct, deleteOrder } from "@/lib/db";
 
 const statusColors = {
   pendente: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
@@ -54,30 +54,39 @@ export default function TableGroup({ tableNumber, orders, onUpdate, onClearTable
     const next = nextStatus[order.status];
     if (!next) return;
 
-    if (order.status === "pendente" && next === "confirmado") {
-      const products = await base44.entities.Product.list();
-      for (const item of order.items || []) {
-        const product = products.find((p) => p.id === item.product_id);
-        if (product && product.stock_enabled && product.stock > 0) {
-          const newStock = Math.max(0, product.stock - item.quantity);
-          const updates = { stock: newStock };
-          if (newStock === 0) updates.available = false;
-          await base44.entities.Product.update(product.id, updates);
+    try {
+      if (order.status === "pendente" && next === "confirmado") {
+        const products = await listProducts();
+        for (const item of order.items || []) {
+          const product = products.find((p) => p.id === item.product_id);
+          if (product && product.stock_enabled && product.stock > 0) {
+            const newStock = Math.max(0, product.stock - item.quantity);
+            const updates = { stock: newStock };
+            if (newStock === 0) updates.available = false;
+            await updateProduct(product.id, updates);
+          }
         }
       }
-    }
 
-    await base44.entities.Order.update(order.id, { status: next });
-    onUpdate();
+      await updateOrder(order.id, { status: next });
+      if (onUpdate) onUpdate();
+    } catch (err) {
+      console.error("[TableGroup] Erro ao avançar pedido:", err);
+    }
   };
 
   const handleClearTable = async () => {
     setClearing(true);
-    for (const order of orders) {
-      await base44.entities.Order.delete(order.id);
+    try {
+      for (const order of orders) {
+        await deleteOrder(order.id);
+      }
+    } catch (err) {
+      console.error("[TableGroup] Erro ao limpar mesa:", err);
+    } finally {
+      setClearing(false);
+      if (onClearTable) onClearTable();
     }
-    setClearing(false);
-    onClearTable();
   };
 
   return (
@@ -124,7 +133,9 @@ export default function TableGroup({ tableNumber, orders, onUpdate, onClearTable
                 <div className="px-4 pt-3 pb-1 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">
-                      {new Date(order.created_date).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })}
+                      {order.created_date
+                        ? new Date(order.created_date).toLocaleTimeString("pt-PT", { hour: "2-digit", minute: "2-digit" })
+                        : ""}
                     </span>
                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${statusColors[order.status]}`}>
                       {statusLabel[order.status]}

@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
 import { ClipboardList, Wine, BellRing, BellOff } from "lucide-react";
 import TableGroup from "@/components/admin/TableGroup";
 import { useBarSettings } from "@/lib/BarSettingsContext";
 import { useOrderNotification } from "@/hooks/useOrderNotification";
+import { subscribeOrders } from "@/lib/db";
 
 export default function Staff() {
   const [orders, setOrders] = useState([]);
@@ -16,38 +16,66 @@ export default function Staff() {
   const { settings } = useBarSettings();
   const { playSound } = useOrderNotification();
 
+  // Mantém um ref do conjunto de ids conhecidos para detetar
+  // novos pedidos (em vez de updates) e tocar o som apenas nesses.
+  const knownIdsRef = useRef(new Set());
+
   // Keep ref in sync so the subscription closure always reads current value
   useEffect(() => { soundEnabledRef.current = soundEnabled; }, [soundEnabled]);
 
-  const loadOrders = useCallback(async () => {
-    const data = await base44.entities.Order.list("-created_date", 500);
-    setOrders(data);
-    setLoading(false);
+  // Carrega uma lista nova de pedidos (usada por onUpdate/onClearTable)
+  const reloadOrders = useCallback(async () => {
+    // A subscrição onSnapshot já mantém o estado sincronizado em
+    // tempo real; este reload apenas força um loading state breve
+    // para feedback visual ao limpar mesas.
+    setLoading(true);
+    try {
+      // noop — a subscrição trata disso; apenas damos um delay curto
+      await new Promise((r) => setTimeout(r, 120));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    loadOrders();
-
-    const unsubscribe = base44.entities.Order.subscribe((event) => {
-      if (event.type === "create") {
-        setOrders((prev) => [event.data, ...prev]);
+    // Subscrição em tempo real ao Firestore (onSnapshot).
+    // A query está ordenada por created_date desc dentro de
+    // `subscribeOrders`.
+    const unsubscribe = subscribeOrders((event) => {
+      if (event.type === "snapshot") {
+        // Carregamento inicial
+        setOrders(event.data);
+        event.data.forEach((o) => knownIdsRef.current.add(o.id));
+        setLoading(false);
+      } else if (event.type === "create") {
+        // Novo pedido — toca som se ativado
+        if (knownIdsRef.current.has(event.id)) return;
+        knownIdsRef.current.add(event.id);
+        setOrders((prev) => {
+          // Evita duplicados caso o evento chegue duas vezes
+          if (prev.some((o) => o.id === event.id)) return prev;
+          return [event.data, ...prev];
+        });
         setNewOrderAlert(true);
         setNewOrderCount((c) => c + 1);
         if (soundEnabledRef.current) playSound();
         setTimeout(() => setNewOrderAlert(false), 6000);
       } else if (event.type === "update") {
-        setOrders((prev) => prev.map((o) => o.id === event.id ? event.data : o));
+        setOrders((prev) =>
+          prev.map((o) => (o.id === event.id ? event.data : o))
+        );
       } else if (event.type === "delete") {
+        knownIdsRef.current.delete(event.id);
         setOrders((prev) => prev.filter((o) => o.id !== event.id));
       }
     });
 
     return () => unsubscribe();
-  }, [loadOrders]);
+  }, [playSound]);
 
   // Group active orders by table
   const activeOrders = orders.filter((o) => o.status !== "pronto_limpo");
-  
+
   const tableGroups = activeOrders.reduce((acc, order) => {
     const key = order.table_number;
     if (!acc[key]) acc[key] = [];
@@ -151,8 +179,8 @@ export default function Staff() {
                 key={table}
                 tableNumber={table}
                 orders={tableGroups[table]}
-                onUpdate={loadOrders}
-                onClearTable={loadOrders}
+                onUpdate={reloadOrders}
+                onClearTable={reloadOrders}
               />
             ))}
           </div>

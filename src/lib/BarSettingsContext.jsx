@@ -1,54 +1,71 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { getBarSettings, saveBarSettings, subscribeBarSettings } from "@/lib/db";
 
+/**
+ * BarSettingsContext (Firestore)
+ * -----------------------------------------------------------------
+ * Lê e atualiza um documento único (id "bar") na coleção `settings`
+ * do Firestore. Também subscreve alterações em tempo real via
+ * `onSnapshot`, pelo que a cor primária e o nome do bar se atualizam
+ * em todos os clientes instantaneamente quando o admin guarda.
+ * -----------------------------------------------------------------
+ */
 const BarSettingsContext = createContext(null);
 
+const DEFAULT_SETTINGS = {
+  id: "bar",
+  bar_name: "B'Live Lounge Bar",
+  primary_color: "#E91E8C",
+  logo_url: null,
+  tagline: null,
+  payment_methods: ["mbway", "multibanco", "cartao", "numerario"],
+};
+
 export function BarSettingsProvider({ children }) {
-  const [settings, setSettings] = useState({
-    bar_name: "B'Live Lounge Bar",
-    primary_color: "#E91E8C",
-    logo_url: null,
-    tagline: null,
-  });
-
-  const loadSettings = async () => {
-    const data = await base44.entities.BarSettings.list();
-    if (data.length > 0) {
-      setSettings(data[0]);
-      applyColor(data[0].primary_color);
-    }
-  };
-
-  const applyColor = (hex) => {
-    if (!hex) return;
-    const hsl = hexToHsl(hex);
-    document.documentElement.style.setProperty("--primary", hsl);
-    // Keep primary-foreground readable
-    const lightness = parseFloat(hsl.split(" ")[2]);
-    document.documentElement.style.setProperty(
-      "--primary-foreground",
-      lightness > 50 ? "0 0% 9%" : "0 0% 98%"
-    );
-  };
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
 
   useEffect(() => {
-    loadSettings();
+    let cancelled = false;
+
+    // Carga inicial com getBarSettings (uma só vez) — garante que o
+    // documento é criado com defaults se ainda não existir.
+    getBarSettings()
+      .then((data) => {
+        if (cancelled) return;
+        setSettings(data);
+        applyColor(data.primary_color);
+      })
+      .catch((err) => {
+        console.error("[BarSettings] Falha ao carregar configuração:", err);
+      });
+
+    // Subscrição em tempo real — atualiza sempre que o documento muda
+    const unsubscribe = subscribeBarSettings((next) => {
+      if (cancelled) return;
+      setSettings(next);
+      applyColor(next.primary_color);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   const updateSettings = async (newSettings) => {
-    if (settings.id) {
-      const updated = await base44.entities.BarSettings.update(settings.id, newSettings);
-      setSettings(updated);
-      applyColor(updated.primary_color);
-    } else {
-      const created = await base44.entities.BarSettings.create(newSettings);
-      setSettings(created);
-      applyColor(created.primary_color);
+    try {
+      const saved = await saveBarSettings(newSettings);
+      setSettings(saved);
+      applyColor(saved.primary_color);
+      return saved;
+    } catch (err) {
+      console.error("[BarSettings] Falha ao guardar configuração:", err);
+      throw err;
     }
   };
 
   return (
-    <BarSettingsContext.Provider value={{ settings, updateSettings, loadSettings }}>
+    <BarSettingsContext.Provider value={{ settings, updateSettings }}>
       {children}
     </BarSettingsContext.Provider>
   );
@@ -56,6 +73,18 @@ export function BarSettingsProvider({ children }) {
 
 export function useBarSettings() {
   return useContext(BarSettingsContext);
+}
+
+function applyColor(hex) {
+  if (!hex) return;
+  const hsl = hexToHsl(hex);
+  document.documentElement.style.setProperty("--primary", hsl);
+  // Keep primary-foreground readable
+  const lightness = parseFloat(hsl.split(" ")[2]);
+  document.documentElement.style.setProperty(
+    "--primary-foreground",
+    lightness > 50 ? "0 0% 9%" : "0 0% 98%"
+  );
 }
 
 function hexToHsl(hex) {

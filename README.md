@@ -5,12 +5,12 @@ restaurantes. O cliente abre a página `/menu?mesa=N`, escolhe os
 produtos e envia o pedido; o staff acompanha em tempo real na página
 `/staff` e a gestão completa é feita em `/admin`.
 
-> ⚠️ **Nota importante sobre a arquitetura**: a app foi originalmente
-> gerada sobre a plataforma **Base44** (SDK + plugin Vite + WebSocket).
-> Essa dependência foi **removida na totalidade** por causar o erro
-> `t.filter is not a function` em produção (Vercel). Atualmente a app
-> usa **Mock Data** persistido em `localStorage` — funciona sem
-> qualquer backend. Ver secção [Arquitetura](#arquitetura).
+> ℹ️ **Arquitetura atual**: a app foi migrada de **Base44** para
+> **Firebase Firestore**. A persistência é multi-utilizador (todos os
+> dispositivos partilham a mesma base de dados Firebase) e a
+> sincronização é em tempo real via `onSnapshot`. A autenticação foi
+> desativada (modo demo) para permitir acesso livre a `/admin` e
+> `/staff`. Ver secção [Arquitetura](#arquitetura).
 
 ## Requisitos
 
@@ -27,27 +27,23 @@ npm install
 
 ## Variáveis de ambiente
 
-A partir da remoção da Base44 **já não é necessário nenhum ficheiro
-`.env`**. A app funciona apenas com o `npm install` + `npm run dev`.
+Não são necessárias. A configuração do Firebase está embutida em
+`src/lib/firebase.js` (projectId: `autocell-535c2`).
 
-Caso queira sobrepor o ID da app (apenas para compatibilidade de
-código antigo), pode definir:
-
-```
-VITE_BASE44_APP_ID=blive-mock-app
-```
-
-mas isso é opcional e não tem efeito prático na nova arquitetura.
+> ⚠️ **Regras de segurança do Firestore**: para a demo funcionar, as
+> regras do Firestore devem permitir leitura e escrita públicas nas
+> coleções `products`, `orders` e `settings`. Em produção, convém
+> restringir a escrita a utilizadores autenticados com role admin.
 
 ## Scripts
 
-| Script            | Descrição                                |
-| ----------------- | ---------------------------------------- |
-| `npm run dev`     | Arranca o Vite em modo desenvolvimento.  |
-| `npm run build`   | Compila para `dist/` para produção.      |
-| `npm run preview` | Pré-visualiza o build de produção.       |
-| `npm run lint`    | Corre o ESLint sem mostrar avisos.       |
-| `npm run lint:fix`| Corre o ESLint e corrige automaticamente.|
+| Script             | Descrição                                |
+| ------------------ | ---------------------------------------- |
+| `npm run dev`      | Arranca o Vite em modo desenvolvimento.  |
+| `npm run build`    | Compila para `dist/` para produção.      |
+| `npm run preview`  | Pré-visualiza o build de produção.       |
+| `npm run lint`     | Corre o ESLint sem mostrar avisos.       |
+| `npm run lint:fix` | Corre o ESLint e corrige automaticamente.|
 
 ## Estrutura de rotas
 
@@ -55,8 +51,10 @@ mas isso é opcional e não tem efeito prático na nova arquitetura.
 | --------- | -------- | -------------------------------------------------- |
 | `/`       | Público  | Menu digital (atalho para `/menu`).                |
 | `/menu`   | Público  | Menu digital com carrinho e envio de pedido.       |
-| `/staff`  | Protegido| Vista de_staff (pedidos por mesa, som de notificação). |
-| `/admin`  | Protegido| Painel de gestão: pedidos, menu, stock, analytics, vendas, QR, configurações. |
+| `/staff`  | Livre*   | Vista de_staff (pedidos por mesa, som de notificação, **tempo real**). |
+| `/admin`  | Livre*   | Painel de gestão: pedidos, menu, stock, analytics, vendas, QR, configurações. |
+
+\* Em modo demo não há autenticação. Ver `src/lib/AuthContext.jsx`.
 
 ## Arquitetura
 
@@ -64,58 +62,62 @@ mas isso é opcional e não tem efeito prático na nova arquitetura.
 
 ```
 src/
-├── api/
-│   └── base44Client.js     ← Mock client (localStorage + pub/sub)
+├── lib/
+│   ├── firebase.js         ← Inicializa Firebase App + Firestore (db)
+│   ├── db.js               ← Camada de acesso a dados (CRUD + onSnapshot)
+│   ├── AuthContext.jsx     ← Auth bypass para demo (sempre admin)
+│   ├── BarSettingsContext.jsx ← Documento único "bar" na coleção settings
+│   ├── app-params.js       ← Legacy (não usado)
+│   ├── PageNotFound.jsx    ← Página 404
+│   ├── query-client.js     ← React Query client
+│   └── utils.js            ← Helpers (cn, etc.)
 ├── components/
 │   ├── admin/              ← Componentes do painel de gestão
 │   ├── menu/               ← Componentes do menu digital
 │   └── ui/                 ← Componentes shadcn/ui
 ├── hooks/
 │   └── useOrderNotification.js  ← Som de notificação (Web Audio API)
-├── lib/
-│   ├── app-params.js       ← Parâmetros da app (Mock, sem Base44)
-│   ├── AuthContext.jsx     ← Contexto de autenticação (Mock)
-│   ├── BarSettingsContext.jsx ← Configurações do bar (Mock)
-│   ├── PageNotFound.jsx    ← Página 404
-│   └── query-client.js     ← React Query client
 ├── pages/
-│   ├── Admin.jsx
-│   ├── Menu.jsx
-│   └── Staff.jsx
+│   ├── Admin.jsx           ← onSnapshot(orders) + onSnapshot(products via reload)
+│   ├── Menu.jsx            ← getDocs(products where available==true)
+│   └── Staff.jsx           ← onSnapshot(orders ordered by created_date desc)
 ├── App.jsx                 ← Rotas + providers
 ├── main.jsx                ← Entry point
 └── index.css               ← Estilos globais (Tailwind)
 ```
 
-### Mock Data (`src/api/base44Client.js`)
+### Firestore — coleções
 
-Este módulo substitui completamente o cliente `@base44/sdk` e mantém a
-mesma interface pública para não obrigar a reescrita de componentes:
+| Coleção    | Tipo       | Notas                                                  |
+| ---------- | ---------- | ------------------------------------------------------ |
+| `products` | documentos | Um doc por produto. Campos: `name`, `description`, `price`, `category`, `image_url`, `available`, `stock_enabled`, `stock`, `created_date`, `updated_date`. |
+| `orders`   | documentos | Um doc por pedido. Campos: `table_number`, `items[]`, `total_amount`, `tip_amount`, `status`, `payment_method`, `notes`, `created_date`, `updated_date`. |
+| `settings` | 1 documento | Doc com id `bar`. Campos: `bar_name`, `primary_color`, `logo_url`, `tagline`, `payment_methods`. |
 
-- `base44.entities.Product` — `list()`, `filter()`, `create()`,
-  `update()`, `delete()`, `subscribe()`.
-- `base44.entities.Order` — mesma API; `subscribe()` substitui o
-  WebSocket original.
-- `base44.entities.BarSettings` — mesma API.
-- `base44.auth.me()`, `base44.auth.logout()`,
-  `base44.auth.redirectToLogin()` — no-ops em modo Mock.
-- `base44.integrations.Core.UploadFile()` — devolve um data URL base64
-  que pode ser usado diretamente em `<img src=...>`.
+### Camada de dados (`src/lib/db.js`)
 
-Os dados são persistidos em `localStorage` com o prefixo `blive_`
-(`blive_Product`, `blive_Order`, `blive_BarSettings`). Na primeira
-carga são inseridos dados semente (6 produtos, 3 pedidos, 1
-configuração de bar) para a app arrancar com conteúdo visível.
+Todos os componentes consomem este módulo. Funções exportadas:
 
-Para limpar todos os dados Mock e voltar à semente inicial, abra a
-consola do browser e execute:
+- `listProducts()` — `getDocs(collection products)` ordenado por `created_date` desc.
+- `listAvailableProducts()` — `getDocs(query products where available==true)`.
+- `createProduct(data)`, `updateProduct(id, patch)`, `deleteProduct(id)`.
+- `subscribeProducts(callback)` — `onSnapshot(collection products)`.
+- `listOrders(limit)` — `getDocs(query orders orderBy created_date desc)`.
+- `createOrder(data)`, `updateOrder(id, patch)`, `deleteOrder(id)`.
+- `subscribeOrders(callback)` — `onSnapshot(query orders orderBy created_date desc)`. Emite eventos `{type: "snapshot"|"create"|"update"|"delete", id?, data?}` para compatibilidade com os componentes que vieram da Base44.
+- `getBarSettings()`, `saveBarSettings(data)`, `subscribeBarSettings(callback)`.
+- `uploadFile({file})` — lê ficheiro como data URL base64 (sem Firebase Storage).
 
-```js
-Object.keys(localStorage)
-  .filter((k) => k.startsWith("blive_"))
-  .forEach((k) => localStorage.removeItem(k));
-location.reload();
-```
+### Sincronização em tempo real
+
+- `Staff.jsx` e `Admin.jsx` usam `subscribeOrders(callback)` para receber
+  pedidos novos no instante em que são criados. A query está ordenada
+  por `created_date desc` para que os mais recentes apareçam no topo.
+- O som de notificação (`useOrderNotification`) toca apenas quando
+  chega um pedido **novo** (id não conhecido), não em updates.
+- `BarSettingsContext` usa `subscribeBarSettings` para que qualquer
+  alteração à cor primária ou nome do bar se reflita em todos os
+  clientes instantaneamente.
 
 ### Vercel
 
@@ -143,14 +145,12 @@ rota.
 
 ## Próximos passos sugeridos
 
-A arquitetura atual é **frontend-only**. Quando se quiser ter
-persistência multi-utilizador (vários dispositivos a ver os mesmos
-pedidos), será necessário ligar a um backend. Sugestões:
-
-1. **Supabase** — oferece PostgreSQL + Realtime, substituindo com
-   poucas alterações o Mock Client.
-2. **Firebase Firestore** — alternativa NoSQL com real-time.
-3. **API REST própria** — máxima flexibilidade, exige mais trabalho.
-
-Em qualquer dos casos, basta reescrever o ficheiro
-`src/api/base44Client.js` mantendo a mesma interface pública.
+- **Reativar autenticação** com Firebase Auth (email/password ou
+  Google) e restringir `/admin` e `/staff` a utilizadores com role
+  `admin`. As regras de segurança do Firestore devem ser atualizadas
+  em paralelo.
+- **Mover uploads para Firebase Storage** em vez de data URLs base64
+  (que incham os documentos Firestore).
+- **Adicionar índices compostos** no Firestore se aparecerem avisos
+  de query sem índice (ex.: filtrar por `available` + ordenar por
+  `created_date`).

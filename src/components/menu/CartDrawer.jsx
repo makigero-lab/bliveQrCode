@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { X, Trash2, ShoppingBag, Send } from "lucide-react";
 import { useState } from "react";
-import { base44 } from "@/api/base44Client";
+import { createOrder } from "@/lib/db";
 
 export default function CartDrawer({ cart, products, onClose, onRemove, onAdd, tableNumber, onOrderPlaced }) {
   const [notes, setNotes] = useState("");
@@ -19,22 +19,27 @@ export default function CartDrawer({ cart, products, onClose, onRemove, onAdd, t
 
   const handleSendOrder = async () => {
     setLoading(true);
-    await base44.entities.Order.create({
-      table_number: tableNumber,
-      items: items.map((i) => ({
-        product_id: i.id,
-        product_name: i.name,
-        quantity: i.quantity,
-        unit_price: i.price,
-        total: i.total,
-      })),
-      total_amount: total,
-      tip_amount: 0,
-      status: "pendente",
-      notes: notes || undefined,
-    });
-    setLoading(false);
-    onOrderPlaced();
+    try {
+      await createOrder({
+        table_number: tableNumber,
+        items: items.map((i) => ({
+          product_id: i.id,
+          product_name: i.name,
+          quantity: i.quantity,
+          unit_price: i.price,
+          total: i.total,
+        })),
+        total_amount: total,
+        tip_amount: 0,
+        status: "pendente",
+        notes: notes || undefined,
+      });
+    } catch (err) {
+      console.error("[CartDrawer] Erro ao enviar pedido:", err);
+    } finally {
+      setLoading(false);
+      onOrderPlaced();
+    }
   };
 
   return (

@@ -2,11 +2,13 @@
 
 ## Visão geral
 
-Aplicação **frontend-only** (sem backend) que implementa um menu
-digital com QR code para bares e restaurantes. Foi originalmente
-gerada sobre a plataforma **Base44**, mas essa dependência foi
-removida na totalidade. Atualmente os dados são Mock, persistidos em
-`localStorage` no browser de cada cliente.
+Aplicação **React + Vite** com backend em **Firebase Firestore**.
+A persistência é multi-utilizador (todos os dispositivos partilham a
+mesma base de dados Firebase) e a sincronização é em tempo real via
+`onSnapshot`.
+
+A autenticação está em modo demo (sempre admin) para permitir acesso
+livre a `/admin` e `/staff` durante apresentações.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -14,8 +16,9 @@ removida na totalidade. Atualmente os dados são Mock, persistidos em
 │                                                            │
 │   React (App.jsx)                                          │
 │     │                                                      │
-│     ├── AuthContext (Mock: user admin local)               │
-│     ├── BarSettingsContext (carrega settings do Mock)      │
+│     ├── AuthContext (bypass: user admin fixo)              │
+│     ├── BarSettingsContext (doc "bar" da col "settings")   │
+│     │     └─ onSnapshot em tempo real                      │
 │     ├── QueryClientProvider (React Query)                  │
 │     └── Routes                                             │
 │           ├── /        → Menu.jsx                          │
@@ -23,19 +26,30 @@ removida na totalidade. Atualmente os dados são Mock, persistidos em
 │           ├── /admin   → RequireAuth → Admin.jsx           │
 │           └── /staff   → RequireAuth → Staff.jsx           │
 │                                                            │
-│   src/api/base44Client.js (Mock Client)                    │
-│     ├─ entities.Product / Order / BarSettings              │
-│     │    ├─ list / filter / create / update / delete       │
-│     │    └─ subscribe (pub/sub interno)                    │
-│     ├─ auth.me / logout / redirectToLogin (no-ops)         │
-│     └─ integrations.Core.UploadFile (data URL base64)      │
+│   src/lib/db.js (camada de acesso a dados)                 │
+│     ├─ products: listProducts, listAvailableProducts,      │
+│     │            createProduct, updateProduct,             │
+│     │            deleteProduct, subscribeProducts          │
+│     ├─ orders:   listOrders, createOrder, updateOrder,     │
+│     │            deleteOrder, subscribeOrders              │
+│     ├─ settings: getBarSettings, saveBarSettings,          │
+│     │            subscribeBarSettings                      │
+│     └─ uploadFile (data URL base64)                        │
 │                                                            │
-│   localStorage (prefixo "blive_")                          │
-│     ├─ blive_Product      (lista de produtos)              │
-│     ├─ blive_Order        (lista de pedidos)               │
-│     ├─ blive_BarSettings  (configuração do bar)            │
-│     └─ blive_seeded_v1    (flag de seed inicial)           │
+│   src/lib/firebase.js (init)                               │
+│     └─ export const db = getFirestore(app)                 │
 └────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+            ┌──────────────────────────────┐
+            │  Firebase Firestore          │
+            │  projectId: autocell-535c2   │
+            │                              │
+            │  Coleções:                   │
+            │   - products (docs)          │
+            │   - orders   (docs)          │
+            │   - settings (1 doc, id bar) │
+            └──────────────────────────────┘
 ```
 
 ## Camadas
@@ -48,59 +62,51 @@ removida na totalidade. Atualmente os dados são Mock, persistidos em
 
 `src/App.jsx` envolve a app em:
 
-1. `AuthProvider` — disponibiliza o user Mock + estado de auth.
+1. `AuthProvider` — bypass de auth (user admin fixo).
 2. `QueryClientProvider` — React Query (com retry = 1 e
    `refetchOnWindowFocus: false`).
-3. `BarSettingsProvider` — carrega as configurações do bar a partir
-   do Mock Client e aplica a cor primária dinamicamente.
+3. `BarSettingsProvider` — carrega o documento `bar` da coleção
+   `settings` via Firestore e subscreve alterações em tempo real
+   (`onSnapshot`). Aplica a cor primária dinamicamente via CSS vars.
 4. `Router` (BrowserRouter) — define as rotas.
 
 ### 3. Páginas
 
-- **`Menu.jsx`** — Lista produtos disponíveis, agrupados por
-  categoria. Carrinho lateral com drawer, envio de pedido para o Mock
-  Client.
+- **`Menu.jsx`** — Lista produtos disponíveis (query
+  `where available == true`), agrupados por categoria. Carrinho
+  lateral com drawer, envio de pedido para a coleção `orders`.
 - **`Admin.jsx`** — Painel de gestão com 7 separadores: Pedidos,
-  Menu, Stock, Analytics, Vendas, QR, Config.
+  Menu, Stock, Analytics, Vendas, QR, Config. Subscreve
+  `orders` em tempo real via `subscribeOrders`.
 - **`Staff.jsx`** — Vista de_staff: pedidos ativos agrupados por
-  mesa, som de notificação via Web Audio API.
+  mesa, som de notificação via Web Audio API quando chega um pedido
+  novo. Subscreve `orders` em tempo real via `subscribeOrders`.
 
-### 4. Mock Client
+### 4. Inicialização do Firebase
 
-`src/api/base44Client.js` é o coração da nova arquitetura. Mantém a
-mesma interface pública do `@base44/sdk` para não obrigar a reescrita
-de componentes:
+`src/lib/firebase.js` inicializa o Firebase App com o
+`firebaseConfig` embutido (projectId `autocell-535c2`) e exporta
+`db = getFirestore(app)`. Todos os outros módulos importam `db`
+a partir daqui.
 
-| Método                          | Comportamento Mock                              |
-| ------------------------------- | ----------------------------------------------- |
-| `entities.X.list(sort, limit)`  | Lê array do localStorage, ordena, limita.       |
-| `entities.X.filter(criteria)`   | Filtra por AND simples (+ operadores `$eq`,...). |
-| `entities.X.create(data)`       | Gera id e created_date, guarda, notifica subs.  |
-| `entities.X.update(id, patch)`  | Merge raso, atualiza `updated_date`, notifica.  |
-| `entities.X.delete(id)`         | Remove do array, notifica.                      |
-| `entities.X.subscribe(cb)`      | Regista callback, devolve função de unsubscribe.|
-| `auth.me()`                     | Devolve Mock user (admin local).                |
-| `auth.logout()` / `redirectToLogin()` | No-ops.                                   |
-| `integrations.Core.UploadFile({file})` | Lê o ficheiro como data URL base64.        |
+### 5. Camada de dados (`src/lib/db.js`)
 
-### 5. Pub/Sub interno (substitui WebSocket)
+Centraliza todas as operações Firestore para que os componentes
+não importem diretamente `firebase/firestore`. Mantém compatibilidade
+com a interface antiga (Base44) no que toca a eventos de subscrição:
+`subscribeOrders(callback)` emite `{type, id, data}` em vez do
+formato bruto do Firestore.
 
-Cada entidade mantém um array de subscribers em memória. Quando
-`create` / `update` / `delete` é chamado, todos os subscribers são
-notificados com `{ type, id, data }` — exatamente o formato esperado
-pelos componentes `Admin.jsx` e `Staff.jsx`.
+### 6. Sincronização em tempo real
 
-### 6. Dados semente
-
-Na primeira carga, se `localStorage.blive_seeded_v1` não existir, são
-inseridos:
-
-- **6 produtos** cobrindo as 4 categorias (`bebidas`, `cocktails`,
-  `comida`, `sobremesas`) + `shisha`.
-- **3 pedidos** com estados diferentes (`pendente`, `confirmado`,
-  `em_preparacao`) para a página de Staff carregar com conteúdo.
-- **1 configuração de bar** com nome `B'Live Lounge Bar`, cor
-  `#E91E8C` e tagline.
+- `Staff.jsx` e `Admin.jsx` usam `subscribeOrders(callback)` para
+  receber pedidos novos no instante em que são criados.
+- A query interna é `query(collection(db,"orders"), orderBy("created_date","desc"))`.
+- O som de notificação (`useOrderNotification`) toca apenas quando
+  chega um pedido **novo** (id não conhecido), não em updates.
+- `BarSettingsContext` usa `subscribeBarSettings` para que qualquer
+  alteração à cor primária ou nome do bar se reflita em todos os
+  clientes instantaneamente.
 
 ## Fluxo de pedidos
 
@@ -114,21 +120,22 @@ Cliente (/menu?mesa=3)
   ▼
 CartDrawer.handleSendOrder()
   │
-  │  base44.entities.Order.create({
+  │  createOrder({
   │    table_number: "3",
   │    items: [...],
   │    total_amount: 17.50,
   │    status: "pendente",
   │    notes: "sem gelo"
   │  })
+  │    └─ addDoc(collection(db,"orders"), payload)
   │
   ▼
-Mock Client grava em localStorage.blive_Order
+Firestore grava o documento
   │
-  │  notify("Order", { type: "create", id, data })
+  │  onSnapshot dispara em todos os clientes subscritos
   │
   ▼
-Staff.jsx (subscrito) recebe o evento
+Staff.jsx (subscrito) recebe o evento "create"
   │
   │  setOrders(prev => [event.data, ...prev])
   │  setNewOrderAlert(true)
@@ -137,18 +144,27 @@ Staff.jsx (subscrito) recebe o evento
   ▼
 Staff usa TableGroup.handleAdvance(order) para mudar estado:
    pendente → confirmado → em_preparacao → pronto
+   (cada update é updateDoc(doc(db,"orders",id), {status: next}))
 ```
 
 ## Rotas protegidas
 
 `/admin` e `/staff` estão envolvidos por `<RequireAuth>`. Em modo
-Mock, o `RequireAuth` mostra um loading de 60 ms e deixa passar — não
-há login real. Quando se ligar a um backend, este componente é o ponto
-natural para reintroduzir a verificação de sessão.
+demo, o `RequireAuth` passa direto para o `children` porque o
+`AuthContext` já tem `isAuthenticated: true` desde o início. Quando
+se quiser reintroduzir auth real (Firebase Auth), basta:
+
+1. Ativar Firebase Auth no projeto Firebase.
+2. Reescrever `AuthContext` para usar `onAuthStateChanged`.
+3. Atualizar `RequireAuth` para redirecionar se não autenticado.
+4. Atualizar as regras de segurança do Firestore.
 
 ## Deploy na Vercel
 
 - O `vercel.json` na raiz força todas as rotas para `/index.html`,
   permitindo que o React Router resolva o lado cliente.
 - O comando de build é `npm run build` (Vite), com output em `dist/`.
-- Não é necessário configurar variáveis de ambiente (a app é Mock).
+- Não é necessário configurar variáveis de ambiente (a config do
+  Firebase está embutida em `src/lib/firebase.js`).
+- As regras de segurança do Firestore devem permitir leitura e
+  escrita (pelo menos para a demo). Em produção, restringir a admins.
