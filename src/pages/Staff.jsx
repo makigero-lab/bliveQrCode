@@ -8,6 +8,8 @@ import {
   History,
   Receipt,
   LogOut,
+  RotateCcw,
+  Calendar,
 } from "lucide-react";
 import TableTab from "@/components/admin/TableTab";
 import { useBarSettings } from "@/lib/BarSettingsContext";
@@ -16,6 +18,7 @@ import { useOrderNotification } from "@/hooks/useOrderNotification";
 import {
   subscribeOpenOrders,
   subscribeClosedOrders,
+  reopenTableOrders,
 } from "@/lib/db";
 
 export default function Staff() {
@@ -32,6 +35,8 @@ export default function Staff() {
   const [newOrderAlert, setNewOrderAlert] = useState(false);
   const [newOrderCount, setNewOrderCount] = useState(0);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  // Filtro do histórico: "today" (default) | "yesterday" | "week"
+  const [historyFilter, setHistoryFilter] = useState("today");
   const soundEnabledRef = useRef(true);
   const knownIdsRef = useRef(new Set());
 
@@ -177,16 +182,54 @@ export default function Staff() {
     return groups;
   }, [closedOrders]);
 
-  // Lista de "contas fechadas" — agrupa por (table + closed_at)
+  // Lista de "contas fechadas" — agrupa por (table + closed_at) e
+  // aplica filtro de data (Hoje / Ontem / Esta Semana).
   const closedSessions = useMemo(() => {
+    // === Cálculo dos limites de data para o filtro ===
+    const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+    const endOfYesterday = new Date(startOfToday); // = início de hoje
+
+    const startOfWeek = new Date(startOfToday);
+    // Últimos 7 dias incluindo hoje (semana rolante, não semana calendário)
+    startOfWeek.setDate(startOfWeek.getDate() - 6);
+
+    // Determina os limites conforme o filtro ativo
+    let startMs, endMs;
+    if (historyFilter === "today") {
+      startMs = startOfToday.getTime();
+      endMs = now.getTime();
+    } else if (historyFilter === "yesterday") {
+      startMs = startOfYesterday.getTime();
+      endMs = endOfYesterday.getTime();
+    } else {
+      // week — últimos 7 dias até agora
+      startMs = startOfWeek.getTime();
+      endMs = now.getTime();
+    }
+
+    // Filtra pedidos fechados dentro do intervalo
+    const filteredOrders = closedOrders.filter((o) => {
+      const ts = o.closed_at || o.updated_date || o.created_date;
+      if (!ts) return false;
+      const t = new Date(ts).getTime();
+      return t >= startMs && t < endMs + (historyFilter === "today" || historyFilter === "week" ? 1 : 0);
+    });
+
+    // Agrupa por (table + closed_at)
     const sessions = [];
     const seen = new Set();
 
-    closedOrders.forEach((order) => {
+    filteredOrders.forEach((order) => {
       const key = `${order.table || order.table_number || "1"}__${order.closed_at || order.updated_date || ""}`;
       if (seen.has(key)) return;
       seen.add(key);
-      const sessionOrders = closedOrders.filter((o) => {
+      const sessionOrders = filteredOrders.filter((o) => {
         const k = `${o.table || o.table_number || "1"}__${o.closed_at || o.updated_date || ""}`;
         return k === key;
       });
@@ -211,7 +254,13 @@ export default function Staff() {
     });
 
     return sessions;
-  }, [closedOrders]);
+  }, [closedOrders, historyFilter]);
+
+  // Soma total do histórico filtrado (para mostrar no header)
+  const totalFechado = closedSessions.reduce(
+    (s, sess) => s + (Number(sess.total) || 0),
+    0
+  );
 
   // -------------------------------------------------------------
   // Render
@@ -408,12 +457,43 @@ export default function Staff() {
         {/* === Vista: Histórico === */}
         {view === "history" && (
           <>
+            {/* Header + resumo */}
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-semibold text-base">
                 {closedSessions.length === 0
                   ? "Histórico vazio"
                   : `${closedSessions.length} conta${closedSessions.length !== 1 ? "s" : ""} fechada${closedSessions.length !== 1 ? "s" : ""}`}
               </h2>
+              {closedSessions.length > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  Total:{" "}
+                  <span className="text-primary font-bold">
+                    €{totalFechado.toFixed(2)}
+                  </span>
+                </p>
+              )}
+            </div>
+
+            {/* Filtros de data: Hoje / Ontem / Esta Semana */}
+            <div className="flex items-center gap-1 mb-3 bg-card border border-border/50 rounded-2xl p-1">
+              <Calendar className="w-3.5 h-3.5 text-muted-foreground ml-2 flex-shrink-0" />
+              {[
+                { value: "today", label: "Hoje" },
+                { value: "yesterday", label: "Ontem" },
+                { value: "week", label: "Esta Semana" },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setHistoryFilter(opt.value)}
+                  className={`flex-1 text-xs font-medium px-3 py-2 rounded-xl transition-colors ${
+                    historyFilter === opt.value
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
             </div>
 
             {loadingClosed ? (
@@ -428,7 +508,14 @@ export default function Staff() {
             ) : closedSessions.length === 0 ? (
               <div className="text-center py-20 text-muted-foreground">
                 <History className="w-14 h-14 mx-auto mb-3 opacity-20" />
-                <p className="text-sm">Sem contas fechadas</p>
+                <p className="text-sm">
+                  Sem contas fechadas{" "}
+                  {historyFilter === "today"
+                    ? "hoje"
+                    : historyFilter === "yesterday"
+                    ? "ontem"
+                    : "esta semana"}
+                </p>
                 <p className="text-xs mt-1 opacity-70">
                   Quando fechares uma mesa no separador "Mesas Abertas",
                   ela aparece aqui.
@@ -459,6 +546,8 @@ export default function Staff() {
 // -------------------------------------------------------------
 function ClosedSessionCard({ table, closedAt, orders, total }) {
   const [expanded, setExpanded] = useState(false);
+  const [reopening, setReopening] = useState(false);
+  const [error, setError] = useState("");
 
   const formatTime = (iso) => {
     if (!iso) return "";
@@ -496,11 +585,54 @@ function ClosedSessionCard({ table, closedAt, orders, total }) {
     return acc;
   }, []);
 
+  // === Reabrir Mesa ===
+  // Batch update: tab_status "closed" → "open" para todos os pedidos
+  // desta sessão (mesma mesa + mesmo closed_at). A mesa reaparece
+  // instantaneamente no ecrã principal (onSnapshot reage à mudança).
+  const handleReopen = async (e) => {
+    e.stopPropagation();
+    const confirm = window.confirm(
+      `Reabrir a Mesa ${table}?\n\n` +
+        `${orders.length} pedido${orders.length !== 1 ? "s" : ""} desta conta ` +
+        `voltará${orders.length !== 1 ? "ão" : "á"} para "Mesas Abertas".\n\n` +
+        `Total: €${total.toFixed(2)}\n\n` +
+        `Isto é útil se fechaste a mesa por engano ou se o cliente ` +
+        `quer continuar a pedir.\n\n` +
+        `Confirmar?`
+    );
+    if (!confirm) return;
+
+    setReopening(true);
+    setError("");
+    try {
+      console.info(
+        `[Histórico] A reabrir Mesa ${table} (sessão ${closedAt}, ${orders.length} pedidos)...`
+      );
+      const result = await reopenTableOrders(table, {
+        mode: "session",
+        closedAt,
+      });
+      console.info(
+        `[Histórico] Mesa ${table} reaberta: ${result.reopened} pedidos atualizados.`
+      );
+      // O onSnapshot de "open" e "closed" dispara automaticamente:
+      // - Pedidos saem do histórico (subscribeClosedOrders)
+      // - Pedidos entram nas mesas abertas (subscribeOpenOrders)
+      // Não é preciso fazer nada aqui.
+    } catch (err) {
+      console.error(`[Histórico] Erro ao reabrir Mesa ${table}:`, err);
+      setError(`Erro ao reabrir: ${err?.message || "verifica a consola."}`);
+    } finally {
+      setReopening(false);
+    }
+  };
+
   return (
     <motion.div
       layout
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.97 }}
       className="bg-card/60 border border-border/50 rounded-2xl overflow-hidden opacity-80 hover:opacity-100 transition-opacity"
     >
       <div
@@ -536,6 +668,18 @@ function ClosedSessionCard({ table, closedAt, orders, total }) {
               €{total.toFixed(2)}
             </p>
           </div>
+          {/* Botão Reabrir Mesa */}
+          <button
+            onClick={handleReopen}
+            disabled={reopening}
+            title="Reabrir esta conta (volta para Mesas Abertas)"
+            className="flex items-center gap-1 bg-primary/10 text-primary border border-primary/30 text-[10px] font-semibold px-2.5 py-1.5 rounded-lg hover:bg-primary/20 active:scale-95 transition-all disabled:opacity-50"
+          >
+            <RotateCcw className={`w-3 h-3 ${reopening ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">
+              {reopening ? "A reabrir..." : "Reabrir"}
+            </span>
+          </button>
           {expanded ? (
             <ChevronUpSmall />
           ) : (
@@ -577,6 +721,26 @@ function ClosedSessionCard({ table, closedAt, orders, total }) {
             {orders.length} pedido{orders.length !== 1 ? "s" : ""} ·{" "}
             {formatTime(orders[orders.length - 1]?.created_date)} →{" "}
             {formatTime(orders[0]?.created_date)}
+          </p>
+
+          {error && (
+            <div className="mt-2 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-[11px] text-red-300">
+              {error}
+            </div>
+          )}
+
+          {/* Botão Reabrir Mesa (versão expandida, mais visível) */}
+          <button
+            onClick={handleReopen}
+            disabled={reopening}
+            className="w-full mt-2 flex items-center justify-center gap-2 bg-primary/10 text-primary border border-primary/30 text-xs font-semibold py-2.5 rounded-xl hover:bg-primary/20 active:scale-95 transition-all disabled:opacity-50"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${reopening ? "animate-spin" : ""}`} />
+            {reopening ? "A reabrir mesa..." : "Reabrer Mesa"}
+          </button>
+          <p className="text-[10px] text-muted-foreground/60 text-center mt-1">
+            A mesa volta para "Mesas Abertas" com todos os pedidos
+            desta conta.
           </p>
         </div>
       )}

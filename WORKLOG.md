@@ -1215,3 +1215,96 @@ admin em `users/`.
   graciosamente se a BD Firestore não existir, com mensagem útil).
 - Botão de setup disponível em `/admin → Sistema` (após primeiro login).
 - README tem guia completo passo-a-passo.
+
+---
+
+## 2026-06-20 — Filtros no Histórico + Botão Reabrir Mesa
+
+**Tarefas executadas**
+
+1. **Filtros de data no Histórico** (Hoje / Ontem / Esta Semana)
+   com default em "Hoje" para manter o ecrã focado no turno atual.
+2. **Botão "Reabrir Mesa"** em cada sessão fechada do histórico —
+   faz batch update `tab_status: "closed" → "open"` para essa
+   sessão específica.
+
+### 1. Filtros no Histórico
+
+**`src/pages/Staff.jsx`**:
+
+- Novo estado `historyFilter` com default `"today"`.
+- `closedSessions` memo reescrito para aplicar filtro de data
+  ANTES de agrupar por sessão:
+  - `today`: das 00:00 de hoje até agora.
+  - `yesterday`: das 00:00 de ontem até 00:00 de hoje.
+  - `week`: últimos 7 dias (semana rolante) até agora.
+- Compara contra `closed_at || updated_date || created_date` para
+  resiliência com pedidos legacy.
+- Barra de filtros visível acima da lista: três botões (Hoje /
+  Ontem / Esta Semana) com estado ativo em rosa.
+- Resumo no topo mostra total do histórico filtrado (soma de
+  todas as contas fechadas no período).
+- Estado vazio personalizado conforme o filtro ("Sem contas
+  fechadas hoje/ontem/esta semana").
+
+### 2. Botão "Reabrir Mesa"
+
+**`src/lib/db.js`** — nova função `reopenTableOrders(table, options)`:
+
+- Modos:
+  - `"session"` (default): só reabre pedidos com o mesmo `closed_at`
+    (i.e. a mesma conta fechada). Evita reabrir pedidos antigos
+    quando a mesa foi fechada várias vezes no dia.
+  - `"all"`: reabre TODOS os pedidos fechados dessa mesa.
+- Query: `where(tab_status, ==, "closed") + where(table, ==, X)`.
+  Fallback para `table_number` se legacy.
+- Batch update (400 em 400 via `writeBatch`):
+  - `tab_status: "open"`
+  - `closed_at: null`
+  - `updated_date: agora`
+  - `reopened_at: agora` (auditoria)
+- Retorna `{reopened: N}`.
+
+**`src/pages/Staff.jsx → ClosedSessionCard`** — adicionado botão
+"Reabrir Mesa" em dois sítios:
+
+1. **Versão compacta**: botão pequeno no header da card (ao lado
+   do total pago), com ícone `RotateCcw`. Visível mesmo com a
+   card recolhida.
+2. **Versão expandida**: botão full-width no fundo da card quando
+   expandida, mais visível e com texto descritivo.
+
+Comportamento:
+- Confirmação via `window.confirm` com texto descritivo (mesa,
+  nº pedidos, total).
+- Estado `reopening` mostra spinner no botão.
+- Estado `error` mostra mensagem vermelha na card.
+- Logs `[Histórico]` para diagnóstico.
+
+Fluxo em tempo real (sem refresh):
+1. Staff clica "Reabrir Mesa" → `reopenTableOrders(table, {mode:
+   "session", closedAt})`.
+2. Firestore atualiza os pedidos: `tab_status: "closed" → "open"`.
+3. `subscribeClosedOrders` (onSnapshot com where tab_status==closed)
+   recebe evento `delete` para cada pedido reaberto → sessão
+   desaparece do histórico.
+4. `subscribeOpenOrders` (onSnapshot com where tab_status==open)
+   recebe evento `create` para os mesmos pedidos → mesa reaparece
+   no ecrã principal "Mesas Abertas".
+
+**Estado final**
+
+- Build OK.
+- Histórico filtra por Hoje/Ontem/Esta Semana (default Hoje).
+- Cada conta fechada tem botão "Reabrir Mesa" que faz batch update
+  e a mesa volta instantaneamente para Mesas Abertas.
+
+**Casos de uso**
+
+- Staff fecha a mesa por engano → clica "Reabir" no histórico →
+  mesa volta para Mesas Abertas sem perda de dados.
+- Cliente quer fazer mais pedidos depois de pagar → staff reabre a
+  conta e o cliente pode continuar a enviar pedidos do `/menu`.
+- Auditoria de turnos: filtrar por "Hoje" para ver apenas o turno
+  atual; "Ontem" para fecho do dia anterior; "Esta Semana" para
+  relatório semanal.

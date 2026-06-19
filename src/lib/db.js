@@ -484,6 +484,87 @@ async function _batchClose(docs, isoNow) {
   return { closed };
 }
 
+/**
+ * Reabre uma mesa que estava fechada: atualiza TODOS os pedidos com
+ * `tab_status == 'closed'` da mesa indicada para `tab_status == 'open'`.
+ *
+ * É o inverso de `closeTableOrders`. Usado pelo botão "Reabrir Mesa"
+ * no histórico do /staff.
+ *
+ * Há duas estratégias consoante o modo:
+ *
+ * 1. Modo "session" (default): só reabre os pedidos que foram fechados
+ *    no mesmo `closed_at` (i.e. a mesma sessão/conta). Isto evita
+ *    reabrir pedidos antigos se a mesa foi fechada várias vezes.
+ *
+ * 2. Modo "all": reabre TODOS os pedidos fechados dessa mesa.
+ *    Útil se a mesa só foi fechada uma vez.
+ *
+ * @param {string} table — identificador da mesa
+ * @param {object} [options]
+ * @param {string} [options.closedAt] — timestamp ISO da sessão a reabrir (modo session)
+ * @param {"session"|"all"} [options.mode="session"]
+ * @returns {Promise<{reopened: number}>}
+ */
+export async function reopenTableOrders(table, options = {}) {
+  const tableStr = String(table);
+  const { closedAt, mode = "session" } = options;
+  const now = new Date().toISOString();
+
+  // Constrói a query base: tab_status="closed" + mesa
+  let q = query(
+    collection(db, "orders"),
+    where("tab_status", "==", "closed"),
+    where("table", "==", tableStr)
+  );
+  let snap = await getDocs(q);
+
+  if (snap.empty) {
+    // Fallback: pedidos legacy sem `table` mas com `table_number`
+    q = query(
+      collection(db, "orders"),
+      where("tab_status", "==", "closed"),
+      where("table_number", "==", tableStr)
+    );
+    snap = await getDocs(q);
+  }
+
+  if (snap.empty) return { reopened: 0 };
+
+  // Filtra no cliente conforme o modo
+  let docsToReopen = snap.docs;
+  if (mode === "session" && closedAt) {
+    docsToReopen = snap.docs.filter((d) => {
+      const data = d.data();
+      // Compara o closed_at por string ISO (já que gravamos como ISO string)
+      // ou por updated_date (fallback).
+      return (data.closed_at || data.updated_date) === closedAt;
+    });
+  }
+
+  if (docsToReopen.length === 0) return { reopened: 0 };
+
+  // Batch update: tab_status → "open", limpa closed_at
+  const BATCH_SIZE = 400;
+  let reopened = 0;
+  for (let i = 0; i < docsToReopen.length; i += BATCH_SIZE) {
+    const slice = docsToReopen.slice(i, i + BATCH_SIZE);
+    const batch = writeBatch(db);
+    slice.forEach((d) => {
+      batch.update(d.ref, {
+        tab_status: "open",
+        closed_at: null,
+        updated_date: now,
+        reopened_at: now,
+      });
+    });
+    await batch.commit();
+    reopened += slice.length;
+  }
+
+  return { reopened };
+}
+
 // -------------------------------------------------------------
 // BarSettings — documento único "bar" na coleção "settings"
 // -------------------------------------------------------------
