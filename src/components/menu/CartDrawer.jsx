@@ -30,6 +30,8 @@ export default function CartDrawer({ cart, products, onClose, onRemove, onAdd, t
     try {
       // Payload normalizado — createOrder valida e completa campos
       // em falta (table_number, items[], total_amount, status).
+      // Sem pagamentos: a app não processa pagamentos online; os
+      // pedidos são pagos diretamente na mesa ao staff.
       const payload = {
         table_number: String(tableNumber || "1"),
         items: items.map((i) => ({
@@ -40,7 +42,6 @@ export default function CartDrawer({ cart, products, onClose, onRemove, onAdd, t
           total: i.total,
         })),
         total_amount: total,
-        tip_amount: 0,
         status: "pendente",
         notes: notes || null,
       };

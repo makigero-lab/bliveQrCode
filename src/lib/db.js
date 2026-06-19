@@ -167,8 +167,6 @@ export async function createOrder(data) {
     total_amount: Number(data.total_amount) || 0,
     status: data.status || "pendente",
     // Campos opcionais
-    tip_amount: Number(data.tip_amount) || 0,
-    payment_method: data.payment_method || null,
     notes: data.notes || null,
     // Timestamps — usa Date nativo (serializado como ISO string) para
     // ordenação lexicográfica estável em `orderBy("created_date","desc")`.
@@ -326,7 +324,6 @@ export async function getBarSettings() {
       primary_color: "#E91E8C",
       logo_url: null,
       tagline: "Cocktails • Shishas • Comida",
-      payment_methods: ["mbway", "multibanco", "cartao", "numerario"],
     };
   }
   return { id: snap.id, ...snap.data() };

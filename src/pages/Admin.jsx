@@ -10,6 +10,8 @@ import StockPanel from "@/components/admin/StockPanel";
 import AnalyticsPanel from "@/components/admin/AnalyticsPanel";
 import ImportCatalogButton from "@/components/admin/ImportCatalogButton";
 import ClearAllProductsButton from "@/components/admin/ClearAllProductsButton";
+import ClearAllOrdersButton from "@/components/admin/ClearAllOrdersButton";
+import BulkProductEditor from "@/components/admin/BulkProductEditor";
 import { useBarSettings } from "@/lib/BarSettingsContext";
 import {
   listProducts,
@@ -224,6 +226,11 @@ export default function Admin() {
                 </div>
               </div>
             )}
+
+            {/* Ação destrutiva: limpar todos os pedidos (dados de teste) */}
+            <div className="mt-6 pt-4 border-t border-border/40">
+              <ClearAllOrdersButton onCleared={loadOrders} />
+            </div>
           </div>
         )}
 
@@ -283,6 +290,24 @@ export default function Admin() {
                   </button>
                 </div>
               ))}
+            </div>
+
+            {/* Editor visual em massa — para trocar URLs de imagens
+                (ex.: colar URL de foto do Instagram do B'Live) sem
+                mexer no código. */}
+            <div className="mt-6 pt-4 border-t border-border/40">
+              <h3 className="font-semibold text-base mb-3 flex items-center gap-2">
+                <Pencil className="w-4 h-4 text-primary" />
+                Editor visual de produtos
+              </h3>
+              <p className="text-muted-foreground text-xs mb-4">
+                Edita todos os campos inline (nome, descrição, preço,
+                categoria, <strong className="text-primary">URL da imagem</strong>,
+                stock, disponibilidade). Botão "Guardar linha" para um
+                produto; "Guardar tudo" para persistir todas as alterações
+                de uma só vez.
+              </p>
+              <BulkProductEditor />
             </div>
           </div>
         )}

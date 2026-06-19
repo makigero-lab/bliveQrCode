@@ -18,7 +18,6 @@ const DEFAULT_SETTINGS = {
   primary_color: "#E91E8C",
   logo_url: null,
   tagline: "Cocktails • Shishas • Comida",
-  payment_methods: ["mbway", "multibanco", "cartao", "numerario"],
 };
 
 export function BarSettingsProvider({ children }) {

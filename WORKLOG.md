@@ -696,3 +696,118 @@ real estava quebrado.
 - Adicionar regras de segurança do Firestore que permitam escrita
   anónima na coleção `orders` (necessário para que clientes não
   autenticados consigam enviar pedidos).
+
+---
+
+## 2026-06-20 — Remover pagamentos + Apagar pedidos + Editor visual
+
+**Tarefas executadas**
+
+1. **Remover completamente os pagamentos** — a app não vai ter
+   pagamentos online. Pedidos são pagos diretamente na mesa ao staff.
+2. **Adicionar botão "Apagar todos os pedidos"** no separador
+   Pedidos (para limpar dados de teste antes de abrir).
+3. **Criar editor visual de produtos** em `/admin` para editar
+   qualquer campo (incluindo URL da imagem) sem mexer no código —
+   útil para trocar placeholders Unsplash por fotos reais do
+   Instagram do B'Live.
+
+**Trabalho realizado**
+
+### 1. Remoção de pagamentos
+
+- **`src/components/menu/PaymentModal.jsx`** — ficheiro APAGADO
+  (não era importado em nenhum lado; era código residual).
+- **`src/components/menu/CartDrawer.jsx`** — removido o campo
+  `tip_amount: 0` do payload enviado ao `createOrder`. Comentário
+  atualizado para explicar que a app não processa pagamentos.
+- **`src/lib/db.js` → `createOrder`** — removidos os campos
+  `tip_amount` e `payment_method` do payload normalizado. O
+  modelo de pedidos passa a ter apenas: `table_number`, `items`,
+  `total_amount`, `status`, `notes`, `created_date`,
+  `updated_date`, `_server_created_at`.
+- **`src/lib/db.js` → `getBarSettings`** e
+  **`src/lib/BarSettingsContext.jsx` → `DEFAULT_SETTINGS`** —
+  removido o campo `payment_methods: [...]`. Os defaults ficam
+  apenas com `bar_name`, `primary_color`, `logo_url`, `tagline`.
+- Verificado com grep: não restam referências a `PaymentModal`,
+  `payment_method`, `payment_methods`, `tip_amount`, `tipAmount`,
+  `TIP_PERCENTS`, `ALL_METHODS`, `mbway`, `multibanco`,
+  `numerario` em nenhum ficheiro de `src/`.
+
+### 2. ClearAllOrdersButton
+
+- **Criado `src/components/admin/ClearAllOrdersButton.jsx`** —
+  espelho visual do `ClearAllProductsButton` mas para a coleção
+  `orders`. Características:
+  - Estado: `idle` / `deleting` / `done` / `error`.
+  - **Dupla confirmação** (dialog + prompt onde o utilizador tem
+    de escrever `APAGAR` em maiúsculas) — operação irreversível.
+  - Apaga em lotes de 400 docs via `writeBatch`.
+  - Barra de progresso vermelha (X / N).
+  - Botão "Cancelar" a meio.
+  - Toast verde/vermelho no fim.
+  - Callback `onCleared` para o Admin recarregar a lista.
+- **Integrado no `Admin.jsx`** — aparece no fundo do separador
+  "Pedidos" (abaixo dos pedidos concluídos), separado por um
+  divisor. Passa `loadOrders` como callback.
+
+### 3. BulkProductEditor (editor visual em /admin)
+
+- **Criado `src/components/admin/BulkProductEditor.jsx`** —
+  editor em massa que lista todos os produtos do Firestore e
+  permite editar inline TODOS os campos:
+  - `name` (input de texto)
+  - `description` (input de texto)
+  - `image_url` (input de texto com preview da imagem em tempo
+    real + botão "abrir imagem" para validar o URL)
+  - `price` (input numérico)
+  - `category` (select com as 5 categorias)
+  - `stock` (input numérico, desativado se `stock_enabled = false`)
+  - `stock_enabled` (toggle)
+  - `available` (toggle Ativo/Inativo)
+  
+  Características:
+  - Filtro por categoria + pesquisa por nome/descrição.
+  - Estado de cada linha: idle / dirty / saving / saved / error.
+  - Botão "Guardar linha" em cada produto alterado — faz `setDoc`
+    com merge no documento correspondente.
+  - Botão "Guardar tudo" no topo — grava TODAS as linhas
+    alteradas em batches de 400 via `writeBatch`.
+  - Preview da imagem em tempo real (16x16) que reage
+    instantaneamente à edição do URL.
+  - Caso de uso principal: trocar os placeholders Unsplash por
+    URLs de fotos reais do Instagram do B'Live. Basta colar o URL
+    no campo `image_url` e clicar em Guardar.
+- **Integrado no `Admin.jsx`** — aparece no separador "Menu",
+  abaixo da lista de produtos existente, separado por um divisor
+  com header "Editor visual de produtos".
+
+**Estado final**
+
+- App sem pagamentos: o fluxo `/menu → /staff` é "envia pedido →
+  staff entrega → cliente paga na mesa". Sem UI de pagamento,
+  sem campos de gorjeta, sem métodos de pagamento (MB WAY,
+  Multibanco, etc.).
+- Build OK.
+- Três novas ferramentas no painel Admin:
+  - "Apagar todos os pedidos" (separador Pedidos)
+  - "Apagar todos os produtos" (separador Menu — já existia)
+  - "Editor visual de produtos" (separador Menu — novo)
+
+**Notas de utilização**
+
+1. **Trocar fotos Unsplash por fotos do Instagram do B'Live**:
+   - Abrir `/admin` → separador Menu.
+   - Scroll até "Editor visual de produtos".
+   - Procurar pelo produto (ex.: "Caipirinha").
+   - Colar o URL da foto do Instagram no campo `image_url`.
+   - Clicar "Guardar linha" (ou editar mais produtos e clicar
+     "Guardar tudo" no topo).
+   - A imagem atualiza em tempo real no preview e no `/menu`.
+
+2. **Limpar pedidos de teste**:
+   - Abrir `/admin` → separador Pedidos.
+   - Scroll até ao fundo.
+   - Clicar "Apagar tudo" → confirmar → escrever `APAGAR`.
+   - A lista de pedidos do `/staff` e do `/admin` esvazia-se.
