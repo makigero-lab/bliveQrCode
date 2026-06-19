@@ -1,69 +1,67 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ClipboardList, Wine, BellRing, BellOff } from "lucide-react";
-import TableGroup from "@/components/admin/TableGroup";
+import {
+  ClipboardList,
+  Wine,
+  BellRing,
+  BellOff,
+  History,
+  Receipt,
+} from "lucide-react";
+import TableTab from "@/components/admin/TableTab";
 import { useBarSettings } from "@/lib/BarSettingsContext";
 import { useOrderNotification } from "@/hooks/useOrderNotification";
-import { subscribeOrders } from "@/lib/db";
+import {
+  subscribeOpenOrders,
+  subscribeClosedOrders,
+} from "@/lib/db";
 
 export default function Staff() {
-  const [orders, setOrders] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // === Estado das mesas abertas (tab_status="open") ===
+  const [openOrders, setOpenOrders] = useState([]);
+  const [loadingOpen, setLoadingOpen] = useState(true);
+
+  // === Estado do histórico (tab_status="closed") ===
+  const [closedOrders, setClosedOrders] = useState([]);
+  const [loadingClosed, setLoadingClosed] = useState(true);
+
+  // === UI state ===
+  const [view, setView] = useState("open"); // "open" | "history"
   const [newOrderAlert, setNewOrderAlert] = useState(false);
   const [newOrderCount, setNewOrderCount] = useState(0);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const soundEnabledRef = useRef(true);
+  const knownIdsRef = useRef(new Set());
+
   const { settings } = useBarSettings();
   const { playSound } = useOrderNotification();
 
-  // Mantém um ref do conjunto de ids conhecidos para detetar
-  // novos pedidos (em vez de updates) e tocar o som apenas nesses.
-  const knownIdsRef = useRef(new Set());
-
-  // Keep ref in sync so the subscription closure always reads current value
-  useEffect(() => { soundEnabledRef.current = soundEnabled; }, [soundEnabled]);
-
-  // Carrega uma lista nova de pedidos (usada por onUpdate/onClearTable)
-  const reloadOrders = useCallback(async () => {
-    // A subscrição onSnapshot já mantém o estado sincronizado em
-    // tempo real; este reload apenas força um loading state breve
-    // para feedback visual ao limpar mesas.
-    setLoading(true);
-    try {
-      // noop — a subscrição trata disso; apenas damos um delay curto
-      await new Promise((r) => setTimeout(r, 120));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    // Subscrição em tempo real ao Firestore (onSnapshot).
-    // A query está ordenada por created_date desc dentro de
-    // `subscribeOrders`. Se essa query falhar (ex.: documentos
-    // legacy sem created_date), o `subscribeOrders` faz fallback
-    // automático para uma query sem orderBy e ordena no cliente.
-    console.info("[Staff] A subscrever pedidos em tempo real...");
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
 
-    const unsubscribe = subscribeOrders((event) => {
-      console.info("[Staff] Evento recebido:", event.type, event.id || "");
+  // -------------------------------------------------------------
+  // Subscrição: mesas abertas (tab_status="open")
+  // -------------------------------------------------------------
+  useEffect(() => {
+    console.info("[Staff] A subscrever mesas ABERTAS (tab_status=open)...");
+
+    const unsubscribe = subscribeOpenOrders((event) => {
+      console.info("[Staff][open] Evento:", event.type, event.id || "");
 
       if (event.type === "snapshot") {
-        // Carregamento inicial
-        console.info(`[Staff] Snapshot inicial: ${event.data.length} pedidos.`);
-        setOrders(event.data);
+        console.info(`[Staff][open] Snapshot: ${event.data.length} pedidos.`);
+        setOpenOrders(event.data);
         event.data.forEach((o) => knownIdsRef.current.add(o.id));
-        setLoading(false);
+        setLoadingOpen(false);
       } else if (event.type === "create") {
-        // Novo pedido — toca som se ativado
-        if (knownIdsRef.current.has(event.id)) {
-          console.info(`[Staff] Pedido ${event.id} já conhecido — ignorado.`);
-          return;
-        }
+        // Só dispara som/alerta se for um pedido NOVO (id desconhecido)
+        if (knownIdsRef.current.has(event.id)) return;
         knownIdsRef.current.add(event.id);
-        console.info(`[Staff] ✨ Novo pedido: mesa ${event.data?.table_number}, €${event.data?.total_amount}, status=${event.data?.status}`);
-        setOrders((prev) => {
-          // Evita duplicados caso o evento chegue duas vezes
+        console.info(
+          `[Staff][open] ✨ Novo pedido: mesa ${event.data?.table}, €${event.data?.total_amount}`
+        );
+        setOpenOrders((prev) => {
           if (prev.some((o) => o.id === event.id)) return prev;
           return [event.data, ...prev];
         });
@@ -72,38 +70,153 @@ export default function Staff() {
         if (soundEnabledRef.current) playSound();
         setTimeout(() => setNewOrderAlert(false), 6000);
       } else if (event.type === "update") {
-        console.info(`[Staff] Pedido ${event.id} atualizado (status=${event.data?.status}).`);
-        setOrders((prev) =>
+        setOpenOrders((prev) =>
           prev.map((o) => (o.id === event.id ? event.data : o))
         );
       } else if (event.type === "delete") {
-        console.info(`[Staff] Pedido ${event.id} apagado.`);
+        // Quando o staff clica em "Limpar Mesa", o pedido recebe
+        // tab_status="closed" — o onSnapshot de "open" emite um
+        // "removed" para esse documento. Removemo-lo do estado.
         knownIdsRef.current.delete(event.id);
-        setOrders((prev) => prev.filter((o) => o.id !== event.id));
+        setOpenOrders((prev) => prev.filter((o) => o.id !== event.id));
       }
     });
 
     return () => {
-      console.info("[Staff] A cancelar subscrição de pedidos.");
+      console.info("[Staff] A cancelar subscrição de mesas abertas.");
       unsubscribe();
     };
   }, [playSound]);
 
-  // Group active orders by table
-  const activeOrders = orders.filter((o) => o.status !== "pronto_limpo");
+  // -------------------------------------------------------------
+  // Subscrição: histórico (tab_status="closed")
+  // -------------------------------------------------------------
+  useEffect(() => {
+    console.info("[Staff] A subscrever HISTÓRICO (tab_status=closed)...");
 
-  const tableGroups = activeOrders.reduce((acc, order) => {
-    const key = order.table_number;
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(order);
-    return acc;
-  }, {});
+    const unsubscribe = subscribeClosedOrders((event) => {
+      console.info("[Staff][closed] Evento:", event.type, event.id || "");
 
-  const sortedTables = Object.keys(tableGroups).sort((a, b) => {
-    const numA = parseInt(a) || 0;
-    const numB = parseInt(b) || 0;
-    return numA - numB;
-  });
+      if (event.type === "snapshot") {
+        console.info(`[Staff][closed] Snapshot: ${event.data.length} pedidos.`);
+        setClosedOrders(event.data);
+        setLoadingClosed(false);
+      } else if (event.type === "create") {
+        // Pedido acabou de ser fechado — aparece no histórico
+        setClosedOrders((prev) => {
+          if (prev.some((o) => o.id === event.id)) return prev;
+          return [event.data, ...prev];
+        });
+      } else if (event.type === "update") {
+        setClosedOrders((prev) =>
+          prev.map((o) => (o.id === event.id ? event.data : o))
+        );
+      } else if (event.type === "delete") {
+        setClosedOrders((prev) => prev.filter((o) => o.id !== event.id));
+      }
+    });
+
+    return () => {
+      console.info("[Staff] A cancelar subscrição do histórico.");
+      unsubscribe();
+    };
+  }, []);
+
+  // -------------------------------------------------------------
+  // Agrupar pedidos abertos por mesa
+  // -------------------------------------------------------------
+  const tableGroups = useMemo(() => {
+    const groups = {};
+    for (const order of openOrders) {
+      // Usa `table` (novo campo); fallback para `table_number` (legacy)
+      const key = order.table || order.table_number || "1";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(order);
+    }
+    return groups;
+  }, [openOrders]);
+
+  const sortedTables = useMemo(() => {
+    return Object.keys(tableGroups).sort((a, b) => {
+      const numA = parseInt(a) || 0;
+      const numB = parseInt(b) || 0;
+      return numA - numB;
+    });
+  }, [tableGroups]);
+
+  // -------------------------------------------------------------
+  // Agrupar histórico por mesa (mostra última conta fechada)
+  // -------------------------------------------------------------
+  const closedGroups = useMemo(() => {
+    const groups = {};
+    for (const order of closedOrders) {
+      const key = order.table || order.table_number || "1";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(order);
+    }
+    // Para cada mesa, ordena por data de fecho (desc) e agrupa por sessão
+    // de fecho (mesmo `closed_at` = mesma conta fechada).
+    Object.values(groups).forEach((orders) => {
+      orders.sort((a, b) => {
+        const aT = a.closed_at
+          ? new Date(a.closed_at).getTime()
+          : a.created_date
+          ? new Date(a.created_date).getTime()
+          : 0;
+        const bT = b.closed_at
+          ? new Date(b.closed_at).getTime()
+          : b.created_date
+          ? new Date(b.created_date).getTime()
+          : 0;
+        return bT - aT;
+      });
+    });
+    return groups;
+  }, [closedOrders]);
+
+  // Lista de "contas fechadas" — agrupa por (table + closed_at)
+  const closedSessions = useMemo(() => {
+    const sessions = [];
+    const seen = new Set();
+
+    closedOrders.forEach((order) => {
+      const key = `${order.table || order.table_number || "1"}__${order.closed_at || order.updated_date || ""}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      const sessionOrders = closedOrders.filter((o) => {
+        const k = `${o.table || o.table_number || "1"}__${o.closed_at || o.updated_date || ""}`;
+        return k === key;
+      });
+      const total = sessionOrders.reduce(
+        (s, o) => s + (Number(o.total_amount) || 0),
+        0
+      );
+      sessions.push({
+        key,
+        table: order.table || order.table_number || "1",
+        closedAt: order.closed_at || order.updated_date,
+        orders: sessionOrders,
+        total,
+      });
+    });
+
+    // Ordena por data de fecho desc
+    sessions.sort((a, b) => {
+      const aT = a.closedAt ? new Date(a.closedAt).getTime() : 0;
+      const bT = b.closedAt ? new Date(b.closedAt).getTime() : 0;
+      return bT - aT;
+    });
+
+    return sessions;
+  }, [closedOrders]);
+
+  // -------------------------------------------------------------
+  // Render
+  // -------------------------------------------------------------
+  const totalAberto = openOrders.reduce(
+    (s, o) => s + (Number(o.total_amount) || 0),
+    0
+  );
 
   return (
     <div className="min-h-screen bg-background pb-safe">
@@ -112,7 +225,11 @@ export default function Staff() {
         <div className="flex items-center justify-between py-3">
           <div className="flex items-center gap-2 min-w-0">
             {settings.logo_url ? (
-              <img src={settings.logo_url} alt="Logo" className="w-7 h-7 object-contain rounded flex-shrink-0" />
+              <img
+                src={settings.logo_url}
+                alt="Logo"
+                className="w-7 h-7 object-contain rounded flex-shrink-0"
+              />
             ) : (
               <Wine className="w-5 h-5 text-primary flex-shrink-0" />
             )}
@@ -120,7 +237,9 @@ export default function Staff() {
               <p className="text-primary text-xs font-semibold tracking-widest uppercase truncate leading-none mb-0.5">
                 {settings.bar_name || "Bar Nobre"}
               </p>
-              <h1 className="font-playfair font-bold text-lg leading-none">Staff</h1>
+              <h1 className="font-playfair font-bold text-lg leading-none">
+                Staff
+              </h1>
             </div>
             {newOrderCount > 0 && (
               <button
@@ -137,10 +256,16 @@ export default function Staff() {
               onClick={() => setSoundEnabled((v) => !v)}
               title={soundEnabled ? "Desativar som" : "Ativar som"}
               className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
-                soundEnabled ? "bg-primary/20 text-primary" : "bg-secondary text-muted-foreground"
+                soundEnabled
+                  ? "bg-primary/20 text-primary"
+                  : "bg-secondary text-muted-foreground"
               }`}
             >
-              {soundEnabled ? <BellRing className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+              {soundEnabled ? (
+                <BellRing className="w-4 h-4" />
+              ) : (
+                <BellOff className="w-4 h-4" />
+              )}
             </button>
             <div className="flex items-center gap-1.5 bg-green-500/10 text-green-400 text-xs font-medium px-2.5 py-1.5 rounded-full">
               <span className="relative flex h-1.5 w-1.5">
@@ -151,57 +276,334 @@ export default function Staff() {
             </div>
           </div>
         </div>
+
+        {/* Tabs: Mesas Abertas / Histórico */}
+        <div className="flex gap-1 -mb-px">
+          <button
+            onClick={() => setView("open")}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${
+              view === "open"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Receipt className="w-4 h-4" />
+            Mesas Abertas
+            {sortedTables.length > 0 && (
+              <span
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                  view === "open"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-muted-foreground"
+                }`}
+              >
+                {sortedTables.length}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setView("history")}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${
+              view === "history"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <History className="w-4 h-4" />
+            Histórico
+            {closedSessions.length > 0 && (
+              <span
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                  view === "history"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-muted-foreground"
+                }`}
+              >
+                {closedSessions.length}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
-      <div className="px-4 py-4 space-y-3 max-w-2xl mx-auto">
-        {/* New order alert banner */}
-        <AnimatePresence>
-          {newOrderAlert && (
-            <motion.div
-              initial={{ opacity: 0, y: -8, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.97 }}
-              className="bg-primary/20 border border-primary/50 text-primary rounded-2xl px-4 py-3 text-sm font-semibold flex items-center gap-2 shadow-lg shadow-primary/10"
-            >
-              <BellRing className="w-4 h-4 animate-bounce flex-shrink-0" />
-              🔔 Novo pedido recebido!
-            </motion.div>
-          )}
-        </AnimatePresence>
+      <div className="px-4 py-4 max-w-2xl mx-auto">
+        {/* === Vista: Mesas Abertas === */}
+        {view === "open" && (
+          <>
+            {/* Banner de novo pedido */}
+            <AnimatePresence>
+              {newOrderAlert && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.97 }}
+                  className="bg-primary/20 border border-primary/50 text-primary rounded-2xl px-4 py-3 text-sm font-semibold flex items-center gap-2 shadow-lg shadow-primary/10 mb-3"
+                >
+                  <BellRing className="w-4 h-4 animate-bounce flex-shrink-0" />
+                  🔔 Novo pedido recebido!
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-        {/* Section header */}
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-base">
-            Mesas ativas{" "}
-            <span className="text-primary font-bold">({sortedTables.length})</span>
-          </h2>
-        </div>
+            {/* Resumo */}
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-semibold text-base">
+                {sortedTables.length === 0
+                  ? "Sem mesas abertas"
+                  : `${sortedTables.length} mesa${sortedTables.length !== 1 ? "s" : ""} aberta${sortedTables.length !== 1 ? "s" : ""}`}
+              </h2>
+              {sortedTables.length > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  Total em aberto:{" "}
+                  <span className="text-primary font-bold">
+                    €{totalAberto.toFixed(2)}
+                  </span>
+                </p>
+              )}
+            </div>
 
-        {loading ? (
-          <div className="space-y-3">
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-32 bg-card rounded-2xl animate-pulse border border-border/30" />
-            ))}
-          </div>
-        ) : sortedTables.length === 0 ? (
-          <div className="text-center py-20 text-muted-foreground">
-            <ClipboardList className="w-14 h-14 mx-auto mb-3 opacity-20" />
-            <p className="text-sm">Sem pedidos ativos</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {sortedTables.map((table) => (
-              <TableGroup
-                key={table}
-                tableNumber={table}
-                orders={tableGroups[table]}
-                onUpdate={reloadOrders}
-                onClearTable={reloadOrders}
-              />
-            ))}
-          </div>
+            {loadingOpen ? (
+              <div className="space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-32 bg-card rounded-2xl animate-pulse border border-border/30"
+                  />
+                ))}
+              </div>
+            ) : sortedTables.length === 0 ? (
+              <div className="text-center py-20 text-muted-foreground">
+                <ClipboardList className="w-14 h-14 mx-auto mb-3 opacity-20" />
+                <p className="text-sm">Sem mesas abertas</p>
+                <p className="text-xs mt-1 opacity-70">
+                  Os novos pedidos do /menu aparecem aqui automaticamente.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {sortedTables.map((table) => (
+                  <TableTab
+                    key={table}
+                    tableNumber={table}
+                    orders={tableGroups[table]}
+                  />
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* === Vista: Histórico === */}
+        {view === "history" && (
+          <>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="font-semibold text-base">
+                {closedSessions.length === 0
+                  ? "Histórico vazio"
+                  : `${closedSessions.length} conta${closedSessions.length !== 1 ? "s" : ""} fechada${closedSessions.length !== 1 ? "s" : ""}`}
+              </h2>
+            </div>
+
+            {loadingClosed ? (
+              <div className="space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-24 bg-card rounded-2xl animate-pulse border border-border/30"
+                  />
+                ))}
+              </div>
+            ) : closedSessions.length === 0 ? (
+              <div className="text-center py-20 text-muted-foreground">
+                <History className="w-14 h-14 mx-auto mb-3 opacity-20" />
+                <p className="text-sm">Sem contas fechadas</p>
+                <p className="text-xs mt-1 opacity-70">
+                  Quando fechares uma mesa no separador "Mesas Abertas",
+                  ela aparece aqui.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {closedSessions.map((session) => (
+                  <ClosedSessionCard
+                    key={session.key}
+                    table={session.table}
+                    closedAt={session.closedAt}
+                    orders={session.orders}
+                    total={session.total}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
+  );
+}
+
+// -------------------------------------------------------------
+// Subcomponente: Cartão de sessão fechada (histórico)
+// -------------------------------------------------------------
+function ClosedSessionCard({ table, closedAt, orders, total }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const formatTime = (iso) => {
+    if (!iso) return "";
+    return new Date(iso).toLocaleTimeString("pt-PT", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const formatDate = (iso) => {
+    if (!iso) return "";
+    return new Date(iso).toLocaleDateString("pt-PT", {
+      day: "2-digit",
+      month: "2-digit",
+    });
+  };
+
+  // Lista consolidada de itens
+  const consolidatedItems = orders.reduce((acc, order) => {
+    for (const item of order.items || []) {
+      const key = item.product_id || item.product_name;
+      const existing = acc.find((i) => i.key === key);
+      if (existing) {
+        existing.quantity += Number(item.quantity) || 0;
+        existing.total += Number(item.total) || 0;
+      } else {
+        acc.push({
+          key,
+          product_name: item.product_name,
+          quantity: Number(item.quantity) || 0,
+          total: Number(item.total) || 0,
+        });
+      }
+    }
+    return acc;
+  }, []);
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-card/60 border border-border/50 rounded-2xl overflow-hidden opacity-80 hover:opacity-100 transition-opacity"
+    >
+      <div
+        className="flex items-center justify-between px-4 py-3 cursor-pointer"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-8 h-8 rounded-lg bg-secondary flex items-center justify-center flex-shrink-0">
+            <Receipt className="w-4 h-4 text-muted-foreground" />
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold text-sm leading-none">
+              Mesa {table}
+            </p>
+            <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
+              {closedAt ? (
+                <>
+                  <History className="w-2.5 h-2.5" />
+                  Fechada às {formatTime(closedAt)} · {formatDate(closedAt)}
+                </>
+              ) : (
+                `Sem data de fecho`
+              )}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <div className="text-right">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider leading-none">
+              Pago
+            </p>
+            <p className="font-bold text-foreground text-sm leading-none mt-0.5">
+              €{total.toFixed(2)}
+            </p>
+          </div>
+          {expanded ? (
+            <ChevronUpSmall />
+          ) : (
+            <ChevronDownSmall />
+          )}
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="px-4 pb-3 space-y-1 border-t border-border/30 pt-3">
+          {consolidatedItems.map((item, i) => (
+            <div
+              key={`${item.key || i}`}
+              className="flex justify-between text-xs"
+            >
+              <span className="text-foreground">
+                <span className="text-primary font-semibold">
+                  {item.quantity}×
+                </span>{" "}
+                {item.product_name}
+              </span>
+              <span className="text-muted-foreground font-medium">
+                €{item.total.toFixed(2)}
+              </span>
+            </div>
+          ))}
+          {orders.some((o) => o.notes) && (
+            <div className="pt-2 mt-2 border-t border-border/30 space-y-1">
+              {orders
+                .filter((o) => o.notes)
+                .map((o, i) => (
+                  <p key={i} className="text-[10px] text-yellow-400/70">
+                    💬 {o.notes}
+                  </p>
+                ))}
+            </div>
+          )}
+          <p className="text-[10px] text-muted-foreground/60 pt-2">
+            {orders.length} pedido{orders.length !== 1 ? "s" : ""} ·{" "}
+            {formatTime(orders[orders.length - 1]?.created_date)} →{" "}
+            {formatTime(orders[0]?.created_date)}
+          </p>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+function ChevronDownSmall() {
+  return (
+    <svg
+      className="w-3 h-3 text-muted-foreground"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M19 9l-7 7-7-7"
+      />
+    </svg>
+  );
+}
+
+function ChevronUpSmall() {
+  return (
+    <svg
+      className="w-3 h-3 text-muted-foreground"
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M5 15l7-7 7 7"
+      />
+    </svg>
   );
 }

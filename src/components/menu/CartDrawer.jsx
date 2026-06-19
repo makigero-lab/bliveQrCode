@@ -29,11 +29,15 @@ export default function CartDrawer({ cart, products, onClose, onRemove, onAdd, t
 
     try {
       // Payload normalizado — createOrder valida e completa campos
-      // em falta (table_number, items[], total_amount, status).
+      // em falta (table, items[], total_amount, status, tab_status).
       // Sem pagamentos: a app não processa pagamentos online; os
       // pedidos são pagos diretamente na mesa ao staff.
+      // `table` é o novo campo principal (String); `table_number` é
+      // mantido por retrocompatibilidade (escrito por createOrder).
+      // `tab_status: "open"` abre a conta da mesa no /staff.
       const payload = {
-        table_number: String(tableNumber || "1"),
+        table: String(tableNumber || "1"),
+        table_number: String(tableNumber || "1"), // legacy
         items: items.map((i) => ({
           product_id: i.id,
           product_name: i.name,
@@ -43,13 +47,15 @@ export default function CartDrawer({ cart, products, onClose, onRemove, onAdd, t
         })),
         total_amount: total,
         status: "pendente",
+        tab_status: "open",
         notes: notes || null,
       };
 
       console.info("[CartDrawer] A enviar pedido para Firestore:", {
-        mesa: payload.table_number,
+        mesa: payload.table,
         items: payload.items.length,
         total: payload.total_amount,
+        tab_status: payload.tab_status,
       });
 
       const created = await createOrder(payload);

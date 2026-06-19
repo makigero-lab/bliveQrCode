@@ -28,6 +28,7 @@ import {
   where,
   orderBy,
   serverTimestamp,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
@@ -147,16 +148,21 @@ export async function createOrder(data) {
   const isoNow = now.toISOString();
 
   // Validação mínima dos campos obrigatórios
-  if (!data.table_number) {
-    console.warn("[db] createOrder chamado sem table_number — usando '1'.");
+  if (!data.table_number && !data.table) {
+    console.warn("[db] createOrder chamado sem table/table_number — usando '1'.");
   }
   if (!Array.isArray(data.items) || data.items.length === 0) {
     throw new Error("createOrder: items[] vazio ou inválido.");
   }
 
+  // `table` é o novo campo normalizado (String). Mantemos `table_number`
+  // por retrocompatibilidade com Admin.jsx / OrderCard.jsx / pedidos antigos.
+  const tableStr = String(data.table || data.table_number || "1");
+
   const payload = {
     // Campos obrigatórios do modelo
-    table_number: String(data.table_number || "1"),
+    table: tableStr,
+    table_number: tableStr, // legacy
     items: data.items.map((i) => ({
       product_id: String(i.product_id || ""),
       product_name: String(i.product_name || ""),
@@ -166,6 +172,8 @@ export async function createOrder(data) {
     })),
     total_amount: Number(data.total_amount) || 0,
     status: data.status || "pendente",
+    // Estado da conta (open = mesa aberta; closed = mesa fechada/paga)
+    tab_status: data.tab_status || "open",
     // Campos opcionais
     notes: data.notes || null,
     // Timestamps — usa Date nativo (serializado como ISO string) para
@@ -174,6 +182,7 @@ export async function createOrder(data) {
     // entre created_date (escrita) e o que chega ao onSnapshot (leitura).
     created_date: isoNow,
     updated_date: isoNow,
+    closed_at: null, // preenchido quando tab_status muda para "closed"
     // serverTimestamp em paralelo para auditoria no Firebase Console
     _server_created_at: serverTimestamp(),
   };
@@ -305,6 +314,174 @@ export function subscribeOrders(callback) {
   return () => {
     if (typeof unsub === "function") unsub();
   };
+}
+
+// -------------------------------------------------------------
+// Subscrições por tab_status (open / closed)
+// -------------------------------------------------------------
+//
+// Usados pelo Staff.jsx (Mesas Abertas + Histórico).
+// A query filtra no servidor por `tab_status`, mas mantém o padrão
+// de eventos {type, id, data} para compatibilidade com o resto do código.
+// Fallback: se a query com orderBy falhar (legacy), recorre a query
+// sem orderBy + ordenação no cliente (igual ao `subscribeOrders`).
+// -------------------------------------------------------------
+
+/**
+ * Subscreve pedidos com `tab_status == 'open'` (mesas abertas).
+ * @param {(event: {type, id?, data?}) => void} callback
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeOpenOrders(callback) {
+  return subscribeByTabStatus("open", callback);
+}
+
+/**
+ * Subscreve pedidos com `tab_status == 'closed'` (histórico).
+ * @param {(event: {type, id?, data?}) => void} callback
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeClosedOrders(callback) {
+  return subscribeByTabStatus("closed", callback);
+}
+
+function subscribeByTabStatus(tabStatus, callback) {
+  let previous = new Map();
+  let firstEmit = true;
+  let unsub = null;
+
+  const sortByCreatedDesc = (a, b) => {
+    const aT = a.created_date ? new Date(a.created_date).getTime() : 0;
+    const bT = b.created_date ? new Date(b.created_date).getTime() : 0;
+    return bT - aT;
+  };
+
+  const handleSnap = (snap) => {
+    const current = new Map();
+    snap.docs.forEach((d) => {
+      current.set(
+        d.id,
+        normalizeTimestamp({ id: d.id, ...d.data() })
+      );
+    });
+
+    if (firstEmit) {
+      const sorted = Array.from(current.values()).sort(sortByCreatedDesc);
+      callback({ type: "snapshot", data: sorted });
+      firstEmit = false;
+    } else {
+      for (const [id, data] of current.entries()) {
+        if (!previous.has(id)) {
+          callback({ type: "create", id, data });
+        } else if (
+          JSON.stringify(previous.get(id)) !== JSON.stringify(data)
+        ) {
+          callback({ type: "update", id, data });
+        }
+      }
+      for (const id of previous.keys()) {
+        if (!current.has(id)) {
+          callback({ type: "delete", id });
+        }
+      }
+    }
+
+    previous = current;
+  };
+
+  const handleError = (err, isPrimary) => {
+    console.error(
+      `[db] subscribeByTabStatus(${tabStatus}) ${isPrimary ? "primary" : "fallback"} error:`,
+      err
+    );
+
+    if (isPrimary) {
+      console.warn(
+        `[db] subscribeByTabStatus(${tabStatus}): a tentar query sem orderBy (fallback)...`
+      );
+      try {
+        unsub = onSnapshot(
+          query(
+            collection(db, "orders"),
+            where("tab_status", "==", tabStatus)
+          ),
+          handleSnap,
+          (err2) => handleError(err2, false)
+        );
+      } catch (e) {
+        console.error(`[db] subscribeByTabStatus(${tabStatus}) fallback falhou:`, e);
+      }
+    }
+  };
+
+  try {
+    const q = query(
+      collection(db, "orders"),
+      where("tab_status", "==", tabStatus),
+      orderBy("created_date", "desc")
+    );
+    unsub = onSnapshot(q, handleSnap, (err) => handleError(err, true));
+  } catch (e) {
+    handleError(e, true);
+  }
+
+  return () => {
+    if (typeof unsub === "function") unsub();
+  };
+}
+
+/**
+ * Fecha uma mesa: atualiza TODOS os pedidos com `tab_status == 'open'`
+ * da mesa indicada para `tab_status == 'closed'`, em batch (400 em 400).
+ * Define também `closed_at` com a data atual.
+ *
+ * @param {string} table — número/identificador da mesa
+ * @returns {Promise<{closed: number}>}
+ */
+export async function closeTableOrders(table) {
+  const tableStr = String(table);
+  const now = new Date().toISOString();
+
+  const q = query(
+    collection(db, "orders"),
+    where("tab_status", "==", "open"),
+    where("table", "==", tableStr)
+  );
+  const snap = await getDocs(q);
+
+  if (snap.empty) {
+    // Fallback: pedidos legacy sem `table` mas com `table_number`
+    const q2 = query(
+      collection(db, "orders"),
+      where("tab_status", "==", "open"),
+      where("table_number", "==", tableStr)
+    );
+    const snap2 = await getDocs(q2);
+    return _batchClose(snap2.docs, now);
+  }
+
+  return _batchClose(snap.docs, now);
+}
+
+async function _batchClose(docs, isoNow) {
+  const BATCH_SIZE = 400;
+  let closed = 0;
+
+  for (let i = 0; i < docs.length; i += BATCH_SIZE) {
+    const slice = docs.slice(i, i + BATCH_SIZE);
+    const batch = writeBatch(db);
+    slice.forEach((d) => {
+      batch.update(d.ref, {
+        tab_status: "closed",
+        closed_at: isoNow,
+        updated_date: isoNow,
+      });
+    });
+    await batch.commit();
+    closed += slice.length;
+  }
+
+  return { closed };
 }
 
 // -------------------------------------------------------------

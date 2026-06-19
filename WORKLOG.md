@@ -811,3 +811,153 @@ real estava quebrado.
    - Scroll até ao fundo.
    - Clicar "Apagar tudo" → confirmar → escrever `APAGAR`.
    - A lista de pedidos do `/staff` e do `/admin` esvazia-se.
+
+---
+
+## 2026-06-20 — Arquitetura de Contas por Mesa (Open Tabs)
+
+**Tarefa**
+
+Mudar o ecrã `/staff` de "lista de pedidos individuais isolados"
+para "Contas por Mesa (Open Tabs)". Pedidos do `/menu` passam a ter
+`tab_status: "open"`; o `/staff` mostra uma grelha de Cartões de
+Mesa consolidados; botão "Limpar Mesa" faz batch update para
+`tab_status: "closed"`; novo separador "Histórico" mostra contas
+fechadas do dia.
+
+**Trabalho realizado**
+
+### 1. Modelo de dados (Firestore)
+
+**`src/lib/db.js → createOrder`** — payload alargado:
+- **NOVO** `table: String` — identificador normalizado da mesa.
+- **NOVO** `tab_status: "open"` — estado da conta (open|closed).
+- **NOVO** `closed_at: null` — preenchido quando a conta é fechada.
+- Mantido `table_number` (legacy) para compatibilidade com Admin/
+  OrderCard/TableGroup existentes.
+
+### 2. Novas funções em `src/lib/db.js`
+
+- **`subscribeOpenOrders(callback)`** — `onSnapshot(query(orders,
+  where(tab_status, ==, "open"), orderBy(created_date, desc)))`.
+  Fallback automático para query sem orderBy se legacy.
+- **`subscribeClosedOrders(callback)`** — igual mas com
+  `tab_status == "closed"` (para o histórico).
+- **`closeTableOrders(table)`** — batch update (400 em 400) que muda
+  `tab_status: "open" → "closed"` em todos os pedidos da mesa.
+  Define também `closed_at = agora`. Fallback para `table_number`
+  se a mesa só tiver pedidos legacy.
+
+### 3. CartDrawer — payload atualizado
+
+**`src/components/menu/CartDrawer.jsx`** — agora envia:
+```js
+{
+  table: "5",
+  table_number: "5",  // legacy
+  items: [...],
+  total_amount: 17.50,
+  status: "pendente",
+  tab_status: "open",
+  notes: "sem gelo",
+}
+```
+
+### 4. Novo componente `TableTab.jsx`
+
+**`src/components/admin/TableTab.jsx`** — Cartão de Mesa (Open Tab):
+- Cabeçalho com número da mesa, hora de abertura (primeiro pedido),
+  hora do último pedido, número de pedidos e total a pagar.
+- Corpo com **lista consolidada de itens** — junta pedidos antigos
+  e novos da mesma mesa, somando as quantidades do mesmo produto
+  (por `product_id`). Mostra badge `(N×)` quando um produto veio de
+  N pedidos diferentes.
+- Notas consolidadas (todos os pedidos com `notes`).
+- Rodapé com **Total a pagar** em destaque + botão vermelho
+  **"Limpar Mesa"**.
+- Botão "Limpar Mesa" chama `closeTableOrders(table)` (batch update).
+  Não apaga dados — apenas muda `tab_status` para `closed`.
+- Estado `clearing` enquanto o batch update decorre.
+- Estado `error` se o batch falhar.
+
+### 5. Reescrita do `Staff.jsx`
+
+**`src/pages/Staff.jsx`** — três grandes mudanças:
+
+#### a) Duas subscrições em paralelo
+
+- `subscribeOpenOrders` para a vista "Mesas Abertas".
+- `subscribeClosedOrders` para a vista "Histórico".
+
+Cada uma atualiza o seu próprio estado (`openOrders` / `closedOrders`).
+Quando o staff clica em "Limpar Mesa":
+1. `closeTableOrders(table)` faz batch update no Firestore.
+2. O `onSnapshot` de `open` emite evento `delete` para cada pedido
+   que mudou de `tab_status` → removido da lista de mesas abertas.
+3. O `onSnapshot` de `closed` emite evento `create` para os mesmos
+   pedidos → aparecem no histórico.
+Tudo automático, sem refresh.
+
+#### b) Agrupamento por mesa
+
+`tableGroups = useMemo(...)` agrupa `openOrders` por `table` (com
+fallback `table_number` para legacy). `sortedTables` ordena por
+número de mesa ascendente.
+
+#### c) UI em tabs
+
+Header passa a ter dois separadores:
+- **Mesas Abertas** (ícone Receipt) — mostra `TableTab` cards em
+  grelha. Resumo no topo: "N mesas abertas, total €X".
+- **Histórico** (ícone History) — mostra `ClosedSessionCard` cards.
+  Cada sessão agrupa pedidos pela mesma combinação
+  `(table, closed_at)` — ou seja, uma conta fechada = uma card.
+  Ordenado por data de fecho descendente (mais recente primeiro).
+  Click na card expande para mostrar itens consolidados + notas.
+
+### 6. Subcomponente `ClosedSessionCard`
+
+Definido inline no `Staff.jsx` (não merece ficheiro próprio).
+Mostra:
+- Mesa + data/hora de fecho
+- Total pago
+- Click expande para mostrar itens consolidados e notas
+
+### 7. Logs detalhados
+
+Mantidos os `console.info` em cada evento (snapshot/create/update/
+delete) para diagnóstico, com prefixos `[Staff][open]` e
+`[Staff][closed]` para distinguir as duas subscrições no DevTools.
+
+**Estado final**
+
+- Build OK.
+- Modelo: cada pedido tem `table`, `table_number` (legacy),
+  `tab_status` (open|closed), `closed_at` (quando fechado).
+- Fluxo: `/menu` cria pedido com `tab_status="open"` → aparece no
+  `/staff` como Cartão de Mesa → staff clica "Limpar Mesa" → batch
+  update para `tab_status="closed"` → desaparece das mesas abertas
+  e aparece no Histórico.
+- Admin.jsx mantém-se com `subscribeOrders` (sem filtro) — vê
+  todos os pedidos, abertos e fechados. Útil para auditoria.
+
+**Como testar**
+
+1. Abrir `/menu?table=5` → adicionar produtos → enviar pedido.
+2. Abrir `/staff` noutro separador → Mesa 5 aparece instantaneamente
+   como Cartão de Mesa com lista consolidada de itens + total.
+3. Voltar ao `/menu?table=5` → enviar outro pedido.
+4. No `/staff`, a Mesa 5 atualiza: novos itens somam-se aos
+   existentes, total atualiza. Som de notificação toca (se ativo).
+5. Clicar "Limpar Mesa" no cartão da Mesa 5 → confirmar.
+6. Mesa 5 desaparece das "Mesas Abertas" e aparece no "Histórico".
+7. Abrir `/admin` → separador Pedidos → Mesa 5 continua visível
+   (agora com `tab_status="closed"`), permitindo auditoria.
+
+**Pendente para próximas iterações**
+
+- Filtrar o histórico por dia (hoje / ontem / esta semana).
+- Adicionar botão "Reabrir mesa" no histórico (reverter
+  `tab_status: closed → open`).
+- Considerar deletar pedidos antigos do histórico após N dias
+  para não inflar a coleção `orders`.
