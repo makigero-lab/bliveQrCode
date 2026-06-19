@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { X, CreditCard, Smartphone, Hash, Banknote, CheckCircle2, Heart } from "lucide-react";
+import { X, CreditCard, Smartphone, Hash, Banknote, CheckCircle2, Heart, AlertTriangle } from "lucide-react";
 import { useState } from "react";
 import { createOrder } from "@/lib/db";
 import { useBarSettings } from "@/lib/BarSettingsContext";
@@ -26,6 +26,7 @@ export default function PaymentModal({ items, total, tableNumber, onClose, onOrd
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [error, setError] = useState("");
 
   const tipAmount =
     tipType === "percent"
@@ -37,9 +38,11 @@ export default function PaymentModal({ items, total, tableNumber, onClose, onOrd
   const handleConfirm = async () => {
     if (!method) return;
     setLoading(true);
+    setError("");
+
     try {
-      await createOrder({
-        table_number: tableNumber,
+      const payload = {
+        table_number: String(tableNumber || "1"),
         items: items.map((i) => ({
           product_id: i.id,
           product_name: i.name,
@@ -51,14 +54,30 @@ export default function PaymentModal({ items, total, tableNumber, onClose, onOrd
         tip_amount: tipAmount,
         status: "pendente",
         payment_method: method,
-        notes: notes || undefined,
+        notes: notes || null,
+      };
+
+      console.info("[PaymentModal] A enviar pedido para Firestore:", {
+        mesa: payload.table_number,
+        items: payload.items.length,
+        total: payload.total_amount,
+        metodo: payload.payment_method,
       });
-    } catch (err) {
-      console.error("[PaymentModal] Erro ao confirmar pedido:", err);
-    } finally {
+
+      const created = await createOrder(payload);
+      console.info("[PaymentModal] Pedido criado com id:", created.id);
+
+      // Só avança para o ecrã de sucesso se o pedido foi gravado.
       setLoading(false);
       setSuccess(true);
       setTimeout(() => onOrderPlaced(), 2500);
+    } catch (err) {
+      console.error("[PaymentModal] Erro ao confirmar pedido:", err);
+      setLoading(false);
+      setError(
+        `Não foi possível confirmar o pedido. ${err?.message || ""}.\n` +
+          "Tenta novamente."
+      );
     }
   };
 
@@ -243,6 +262,14 @@ export default function PaymentModal({ items, total, tableNumber, onClose, onOrd
                 <span className="text-primary">€{grandTotal.toFixed(2)}</span>
               </div>
             </div>
+
+            {/* Erro de envio — visível ao utilizador */}
+            {error && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-3 py-2.5 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-red-300 whitespace-pre-line">{error}</p>
+              </div>
+            )}
 
             <button
               onClick={handleConfirm}

@@ -40,17 +40,28 @@ export default function Staff() {
   useEffect(() => {
     // Subscrição em tempo real ao Firestore (onSnapshot).
     // A query está ordenada por created_date desc dentro de
-    // `subscribeOrders`.
+    // `subscribeOrders`. Se essa query falhar (ex.: documentos
+    // legacy sem created_date), o `subscribeOrders` faz fallback
+    // automático para uma query sem orderBy e ordena no cliente.
+    console.info("[Staff] A subscrever pedidos em tempo real...");
+
     const unsubscribe = subscribeOrders((event) => {
+      console.info("[Staff] Evento recebido:", event.type, event.id || "");
+
       if (event.type === "snapshot") {
         // Carregamento inicial
+        console.info(`[Staff] Snapshot inicial: ${event.data.length} pedidos.`);
         setOrders(event.data);
         event.data.forEach((o) => knownIdsRef.current.add(o.id));
         setLoading(false);
       } else if (event.type === "create") {
         // Novo pedido — toca som se ativado
-        if (knownIdsRef.current.has(event.id)) return;
+        if (knownIdsRef.current.has(event.id)) {
+          console.info(`[Staff] Pedido ${event.id} já conhecido — ignorado.`);
+          return;
+        }
         knownIdsRef.current.add(event.id);
+        console.info(`[Staff] ✨ Novo pedido: mesa ${event.data?.table_number}, €${event.data?.total_amount}, status=${event.data?.status}`);
         setOrders((prev) => {
           // Evita duplicados caso o evento chegue duas vezes
           if (prev.some((o) => o.id === event.id)) return prev;
@@ -61,16 +72,21 @@ export default function Staff() {
         if (soundEnabledRef.current) playSound();
         setTimeout(() => setNewOrderAlert(false), 6000);
       } else if (event.type === "update") {
+        console.info(`[Staff] Pedido ${event.id} atualizado (status=${event.data?.status}).`);
         setOrders((prev) =>
           prev.map((o) => (o.id === event.id ? event.data : o))
         );
       } else if (event.type === "delete") {
+        console.info(`[Staff] Pedido ${event.id} apagado.`);
         knownIdsRef.current.delete(event.id);
         setOrders((prev) => prev.filter((o) => o.id !== event.id));
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      console.info("[Staff] A cancelar subscrição de pedidos.");
+      unsubscribe();
+    };
   }, [playSound]);
 
   // Group active orders by table

@@ -27,6 +27,7 @@ import {
   query,
   where,
   orderBy,
+  serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
@@ -139,13 +140,46 @@ export async function listOrders(limit = 500) {
 }
 
 export async function createOrder(data) {
-  const now = new Date().toISOString();
+  // Normaliza o payload para garantir consistência entre todos os
+  // pedidos (evita que o `subscribeOrders` falhe silenciosamente
+  // por causa de campos em falta).
+  const now = new Date();
+  const isoNow = now.toISOString();
+
+  // Validação mínima dos campos obrigatórios
+  if (!data.table_number) {
+    console.warn("[db] createOrder chamado sem table_number — usando '1'.");
+  }
+  if (!Array.isArray(data.items) || data.items.length === 0) {
+    throw new Error("createOrder: items[] vazio ou inválido.");
+  }
+
   const payload = {
-    ...data,
+    // Campos obrigatórios do modelo
+    table_number: String(data.table_number || "1"),
+    items: data.items.map((i) => ({
+      product_id: String(i.product_id || ""),
+      product_name: String(i.product_name || ""),
+      quantity: Number(i.quantity) || 1,
+      unit_price: Number(i.unit_price) || 0,
+      total: Number(i.total) || 0,
+    })),
+    total_amount: Number(data.total_amount) || 0,
     status: data.status || "pendente",
-    created_date: now,
-    updated_date: now,
+    // Campos opcionais
+    tip_amount: Number(data.tip_amount) || 0,
+    payment_method: data.payment_method || null,
+    notes: data.notes || null,
+    // Timestamps — usa Date nativo (serializado como ISO string) para
+    // ordenação lexicográfica estável em `orderBy("created_date","desc")`.
+    // NOTA: não usamos serverTimestamp() porque queremos consistência
+    // entre created_date (escrita) e o que chega ao onSnapshot (leitura).
+    created_date: isoNow,
+    updated_date: isoNow,
+    // serverTimestamp em paralelo para auditoria no Firebase Console
+    _server_created_at: serverTimestamp(),
   };
+
   const ref = await addDoc(collection(db, "orders"), payload);
   return { id: ref.id, ...payload };
 }
@@ -167,9 +201,18 @@ export async function deleteOrder(id) {
  * Emite eventos individuais { type, id, data } para compatibilidade
  * com os componentes Admin.jsx e Staff.jsx que vieram da Base44.
  *
- * Implementação: na primeira snapshot envia um "reset" com todos os
- * pedidos; nas snapshots seguintes compara com o estado anterior e
- * emite eventos `create`, `update`, `delete` para cada alteração.
+ * Implementação:
+ *   1. Tenta usar `query(collection, orderBy("created_date","desc"))`.
+ *   2. Se essa query falhar (ex.: documentos antigos sem o campo
+ *      `created_date`, o que faz o Firestore devolver um erro de
+ *      "permission-denied" ou "failed-precondition"), recorre
+ *      automaticamente a uma query SEM orderBy e ordena no cliente.
+ *   3. Em ambas as situações, a primeira snapshot emite
+ *      `{type:"snapshot", data:[...]}`. As subsequentes fazem diff
+ *      e emitem `{type:"create"|"update"|"delete", id, data}`.
+ *
+ * Isto torna o `onSnapshot` resiliente a dados legacy e garante
+ * que novos pedidos chegam sempre ao /staff e /admin.
  *
  * @param {(event: {type, id?, data?}) => void} callback
  * @returns {() => void} unsubscribe
@@ -177,46 +220,93 @@ export async function deleteOrder(id) {
 export function subscribeOrders(callback) {
   let previous = new Map(); // id -> data
   let firstEmit = true;
+  let unsub = null;
 
-  const q = query(
-    collection(db, "orders"),
-    orderBy("created_date", "desc")
-  );
+  // Ordena no cliente por created_date desc (fallback robusto)
+  const sortByCreatedDesc = (a, b) => {
+    const aT = a.created_date
+      ? new Date(a.created_date).getTime()
+      : 0;
+    const bT = b.created_date
+      ? new Date(b.created_date).getTime()
+      : 0;
+    return bT - aT;
+  };
 
-  return onSnapshot(
-    q,
-    (snap) => {
-      const current = new Map();
-      snap.docs.forEach((d) => {
-        current.set(d.id, normalizeTimestamp({ id: d.id, ...d.data() }));
-      });
+  const handleSnap = (snap) => {
+    const current = new Map();
+    snap.docs.forEach((d) => {
+      current.set(
+        d.id,
+        normalizeTimestamp({ id: d.id, ...d.data() })
+      );
+    });
 
-      if (firstEmit) {
-        // Carregamento inicial: emite um "snapshot" com tudo
-        callback({ type: "snapshot", data: Array.from(current.values()) });
-        firstEmit = false;
-      } else {
-        // Diff: descobre creates, updates e deletes
-        for (const [id, data] of current.entries()) {
-          if (!previous.has(id)) {
-            callback({ type: "create", id, data });
-          } else if (
-            JSON.stringify(previous.get(id)) !== JSON.stringify(data)
-          ) {
-            callback({ type: "update", id, data });
-          }
-        }
-        for (const id of previous.keys()) {
-          if (!current.has(id)) {
-            callback({ type: "delete", id });
-          }
+    if (firstEmit) {
+      const sorted = Array.from(current.values()).sort(sortByCreatedDesc);
+      callback({ type: "snapshot", data: sorted });
+      firstEmit = false;
+    } else {
+      // Diff: descobre creates, updates e deletes
+      for (const [id, data] of current.entries()) {
+        if (!previous.has(id)) {
+          callback({ type: "create", id, data });
+        } else if (
+          JSON.stringify(previous.get(id)) !== JSON.stringify(data)
+        ) {
+          callback({ type: "update", id, data });
         }
       }
+      for (const id of previous.keys()) {
+        if (!current.has(id)) {
+          callback({ type: "delete", id });
+        }
+      }
+    }
 
-      previous = current;
-    },
-    (err) => console.error("[db] subscribeOrders error:", err)
-  );
+    previous = current;
+  };
+
+  const handleError = (err, isPrimary) => {
+    console.error(
+      `[db] subscribeOrders ${isPrimary ? "primary" : "fallback"} error:`,
+      err
+    );
+
+    // Se a query com orderBy falhar, tenta a query simples (sem orderBy)
+    if (isPrimary) {
+      console.warn(
+        "[db] subscribeOrders: a tentar query sem orderBy (fallback)..."
+      );
+      try {
+        unsub = onSnapshot(
+          collection(db, "orders"),
+          handleSnap,
+          (err2) => handleError(err2, false)
+        );
+      } catch (e) {
+        console.error("[db] subscribeOrders fallback falhou:", e);
+      }
+    }
+  };
+
+  // Tentativa primária: com orderBy
+  try {
+    const q = query(
+      collection(db, "orders"),
+      orderBy("created_date", "desc")
+    );
+    unsub = onSnapshot(q, handleSnap, (err) => handleError(err, true));
+  } catch (e) {
+    // Se a própria construção da query lançar (raro), vai direto ao fallback
+    handleError(e, true);
+  }
+
+  // Retorna função de unsubscribe que funciona seja qual for o ramo
+  // ativo (primary ou fallback).
+  return () => {
+    if (typeof unsub === "function") unsub();
+  };
 }
 
 // -------------------------------------------------------------

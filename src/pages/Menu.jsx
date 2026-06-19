@@ -16,7 +16,9 @@ export default function Menu() {
   const [orderPlaced, setOrderPlaced] = useState(false);
 
   const urlParams = new URLSearchParams(window.location.search);
-  const tableNumber = urlParams.get("mesa") || "1";
+  // Aceita tanto ?mesa=N (PT) como ?table=N (EN) para compatibilidade
+  // com QR codes que possam ter sido gerados com qualquer dos dois.
+  const tableNumber = urlParams.get("mesa") || urlParams.get("table") || "1";
   const { settings } = useBarSettings();
 
   useEffect(() => {

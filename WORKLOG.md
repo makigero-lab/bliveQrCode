@@ -576,3 +576,123 @@ catálogo no Firestore.
 4. Clicar em "Importar Catálogo" para repopular com os 150
    produtos atualizados (após editar `src/data/catalog.js` se
    necessário).
+
+---
+
+## 2026-06-20 — Fix: pedidos do /menu não apareciam no /staff
+
+**Sintoma**
+
+Pedidos criados no `/menu` (carrinho → "Enviar pedido") não
+apareciam no ecrã `/staff`. O circuito de leitura/escrita em tempo
+real estava quebrado.
+
+**Diagnóstico (causas encontradas)**
+
+1. **Query do `subscribeOrders` era frágil** — usava
+   `query(collection(db,"orders"), orderBy("created_date","desc"))`.
+   Se existisse QUALQUER documento na coleção sem o campo
+   `created_date` (ex.: pedidos de teste importados manualmente, ou
+   documentos legacy), o Firestore devolve erro
+   `failed-precondition` e o `onSnapshot` nunca dispara. Sem logs
+   claros, parecia que "nada acontecia".
+
+2. **`CartDrawer` e `PaymentModal` chamavam `onOrderPlaced()` no
+   `finally`** — ou seja, mesmo quando o `createOrder` falhava
+   (ex.: regras de segurança do Firestore, falta de ligação), o
+   utilizador via o ecrã "Obrigado!" e achava que tinha funcionado.
+   O erro ficava só na consola.
+
+3. **Filtro `o.status !== "pronto_limpo"` em Staff.jsx** —
+   correto (pedidos novos têm `status: "pendente"`, que passa no
+   filtro), mas podia confundir se alguém definisse esse estado.
+   Mantido, mas documentado.
+
+4. **`?table=` vs `?mesa=`** — `Menu.jsx` só lia `?mesa=`. QR codes
+   gerados com `?table=` (padrão EN) faziam com que todos os
+   pedidos caíssem na mesa "1".
+
+**Correções aplicadas**
+
+1. **`src/lib/db.js` → `subscribeOrders`** — agora é RESILIENTE:
+   - Tenta primeiro `query(collection, orderBy("created_date","desc"))`.
+   - Se essa query falhar (erro de permissão, `failed-precondition`,
+     etc.), faz fallback automático para uma query SEM `orderBy` e
+     ordena no cliente por `created_date` desc.
+   - Em ambos os casos, a primeira snapshot emite
+     `{type:"snapshot", data:[...]}` (ordenado) e as seguintes
+     emitem `{type:"create"|"update"|"delete", id, data}` via diff.
+   - A função `unsubscribe` devolvida funciona em qualquer dos ramos.
+
+2. **`src/lib/db.js` → `createOrder`** — payload normalizado:
+   - Valida `items[]` (lança erro se vazio).
+   - Converte `table_number` para `String` (default "1").
+   - Mapeia cada item para `{product_id, product_name, quantity,
+     unit_price, total}` com conversões de tipo seguras.
+   - Garante `status: "pendente"`, `total_amount`, `tip_amount`,
+     `payment_method`, `notes`, `created_date` (ISO string),
+     `updated_date` (ISO string).
+   - Adiciona `_server_created_at: serverTimestamp()` em paralelo
+     para auditoria no Firebase Console (não usado para ordenação
+     para evitar inconsistências).
+
+3. **`src/components/menu/CartDrawer.jsx`** — robustez:
+   - `onOrderPlaced()` só é chamado em caso de sucesso do
+     `createOrder` (antes chamava no `finally`).
+   - Adicionado estado `error` com mensagem visível ao utilizador
+     (caixa vermelha com ícone de alerta) acima do botão "Enviar
+     pedido".
+   - `console.info`/`console.error` claros em cada etapa para
+     diagnóstico no DevTools.
+
+4. **`src/components/menu/PaymentModal.jsx`** — mesmas correções
+   que o CartDrawer:
+   - `setSuccess(true)` só em caso de sucesso.
+   - Estado `error` + caixa vermelha visível acima do botão
+     "Confirmar pedido".
+   - Logs claros.
+
+5. **`src/pages/Menu.jsx`** — aceita tanto `?mesa=N` como
+   `?table=N` para compatibilidade com QR codes gerados com
+   qualquer padrão.
+
+6. **`src/pages/Staff.jsx`** — adicionados `console.info` em cada
+   evento recebido (`snapshot`, `create`, `update`, `delete`)
+   para diagnóstico. Quando um novo pedido chega, faz log da mesa,
+   total e status. Isto permite confirmar no DevTools que o
+   `onSnapshot` está a disparar corretamente.
+
+**Estado final**
+
+- Build OK.
+- O fluxo `/menu → Enviar pedido → /staff` está end-to-end
+  resiliente:
+  - Se o Firestore estiver offline ou as regras negarem escrita, o
+    utilizador vê uma mensagem de erro clara no CartDrawer.
+  - Se a query com `orderBy` falhar (dados legacy), o `onSnapshot`
+    faz fallback automático para query simples + ordenação no
+    cliente.
+  - Logs detalhados em todos os passos permitem diagnosticar
+    rapidamente qualquer problema futuro.
+- `?mesa=N` e `?table=N` são ambos aceites no URL.
+
+**Como testar**
+
+1. Abrir `/menu?mesa=5` num separador (cliente).
+2. Abrir `/staff` noutro separador (staff).
+3. No `/menu`, adicionar produtos ao carrinho → "Ver pedido" →
+   "Enviar pedido".
+4. No `/staff`, o pedido deve aparecer imediatamente no topo da
+   lista, com som de notificação (se ativado).
+5. Para diagnosticar problemas, abrir DevTools (F12) → Console
+   em ambos os separadores. Os logs `[CartDrawer]`, `[Staff]`,
+   `[db]` mostram exatamente o que está a acontecer.
+
+**Pendente para próximas iterações**
+
+- Considerar ativar persistência offline do Firestore
+  (`enableIndexedDbPersistence`) para que o /staff continue a
+  mostrar pedidos antigos mesmo sem ligação.
+- Adicionar regras de segurança do Firestore que permitam escrita
+  anónima na coleção `orders` (necessário para que clientes não
+  autenticados consigam enviar pedidos).

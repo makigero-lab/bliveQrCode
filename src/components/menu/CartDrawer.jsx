@@ -1,11 +1,12 @@
 import { motion } from "framer-motion";
-import { X, Trash2, ShoppingBag, Send } from "lucide-react";
+import { X, Trash2, ShoppingBag, Send, AlertTriangle } from "lucide-react";
 import { useState } from "react";
 import { createOrder } from "@/lib/db";
 
 export default function CartDrawer({ cart, products, onClose, onRemove, onAdd, tableNumber, onOrderPlaced }) {
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const items = Object.entries(cart)
     .filter(([, qty]) => qty > 0)
@@ -18,10 +19,19 @@ export default function CartDrawer({ cart, products, onClose, onRemove, onAdd, t
   const total = items.reduce((s, i) => s + i.total, 0);
 
   const handleSendOrder = async () => {
+    if (items.length === 0) {
+      setError("O carrinho está vazio.");
+      return;
+    }
+
     setLoading(true);
+    setError("");
+
     try {
-      await createOrder({
-        table_number: tableNumber,
+      // Payload normalizado — createOrder valida e completa campos
+      // em falta (table_number, items[], total_amount, status).
+      const payload = {
+        table_number: String(tableNumber || "1"),
         items: items.map((i) => ({
           product_id: i.id,
           product_name: i.name,
@@ -32,13 +42,31 @@ export default function CartDrawer({ cart, products, onClose, onRemove, onAdd, t
         total_amount: total,
         tip_amount: 0,
         status: "pendente",
-        notes: notes || undefined,
+        notes: notes || null,
+      };
+
+      console.info("[CartDrawer] A enviar pedido para Firestore:", {
+        mesa: payload.table_number,
+        items: payload.items.length,
+        total: payload.total_amount,
       });
+
+      const created = await createOrder(payload);
+
+      console.info("[CartDrawer] Pedido criado com id:", created.id);
+
+      // Só avança para o ecrã de "Obrigado" se o pedido foi realmente
+      // gravado no Firestore. Antes, chamava onOrderPlaced() no finally
+      // mesmo em caso de erro — isso escondia falhas do utilizador.
+      onOrderPlaced();
     } catch (err) {
       console.error("[CartDrawer] Erro ao enviar pedido:", err);
+      setError(
+        `Não foi possível enviar o pedido. ${err?.message || ""}.\n` +
+          "Verifica a ligação à internet e tenta novamente."
+      );
     } finally {
       setLoading(false);
-      onOrderPlaced();
     }
   };
 
@@ -94,6 +122,14 @@ export default function CartDrawer({ cart, products, onClose, onRemove, onAdd, t
               className="w-full bg-secondary border border-border rounded-xl p-3 text-sm text-foreground placeholder:text-muted-foreground resize-none h-20 focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
           </div>
+
+          {/* Erro de envio — visível ao utilizador */}
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-3 py-2.5 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-red-300 whitespace-pre-line">{error}</p>
+            </div>
+          )}
         </div>
 
         <div className="p-5 border-t border-border/50 space-y-4">
