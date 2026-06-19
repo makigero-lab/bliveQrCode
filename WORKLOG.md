@@ -419,3 +419,91 @@ rigorosamente:
   produtos (quando disponíveis).
 - Ativar Firebase Auth real para restringir `/admin` e `/staff`.
 - Migrar uploads de logótipos para Firebase Storage.
+
+---
+
+## 2026-06-20 — Botão "Importar Catálogo" no painel Admin
+
+**Tarefa**
+
+Adicionar um botão no painel de Admin que leia o catálogo local
+(`scripts/catalog.js`, agora partilhado em `src/data/catalog.js`) e
+faça loop sobre os produtos, enviando cada um para a coleção
+`products` no Firestore via `setDoc`. Garantir que os campos
+importados correspondem ao modelo da app (`name`, `description`,
+`price`, `category`, `image_url`, `available`, `stock_enabled`,
+`stock`).
+
+**Trabalho realizado**
+
+1. **Mover o catálogo para `src/data/catalog.js`** — o catálogo
+   estava em `scripts/catalog.js` (só acessível em Node). Foi
+   copiado para `src/data/catalog.js` para poder ser importado pelo
+   frontend. Adicionei também exports úteis:
+   - `PRODUCTS` (array de 150 produtos)
+   - `CATALOG_TOTAL` (150)
+   - `CATALOG_SUMMARY` (contagem por categoria)
+   - `CATEGORIES` (lista das 5 categorias reconhecidas)
+   - `normalizeProduct(p)` (devolve produto com todos os campos do
+     modelo preenchidos com defaults seguros)
+
+2. **`scripts/catalog.js`** — transformado num re-export de
+   `src/data/catalog.js`, mantendo compatibilidade com o script
+   `scripts/seed-products.js` (que continua a funcionar).
+
+3. **Criado `src/components/admin/ImportCatalogButton.jsx`** —
+   componente React autónomo com:
+   - Estado: `idle` / `importing` / `done` / `error`.
+   - Botão com confirmação (window.confirm) antes de começar.
+   - Import idempotente: usa `setDoc` com id estável
+     `prod-${slug(nome)}` — não cria duplicados.
+   - Cada produto é normalizado via `normalizeProduct()` antes de
+     ser enviado: garante `name`, `description`, `price` (number),
+     `category` (uma das 5 válidas), `image_url`, `available`
+     (default true), `stock_enabled` (default false), `stock`
+     (default 0). Adiciona também `slug`, `created_date` (preserva
+     a data original se o doc já existir) e `updated_date` (agora).
+   - Barra de progresso (X / N) atualizada por cada produto.
+   - Pausa de 100ms a cada 20 produtos para não estourar quota do
+     Firestore.
+   - Botão "Cancelar" para parar o import a meio.
+   - Toast verde (sucesso) ou vermelho (erro) no fim, com contagem
+     de criados vs atualizados.
+   - Callback `onImported` para o `Admin.jsx` recarregar a lista
+     de produtos após o import.
+
+4. **Integrado no `Admin.jsx`** — o botão aparece no separador
+   "Menu" logo abaixo do header "Produtos / Adicionar", acima da
+   lista de produtos existentes. O callback `onImported={loadProducts}`
+   faz com que a lista se atualize automaticamente quando o import
+   termina.
+
+5. **Build validado** — `npm install` + `npm run build` OK.
+   Verificado também que o re-export `scripts/catalog.js →
+   src/data/catalog.js` funciona em Node (o `seed-products.js`
+   continua a funcionar).
+
+**Estado final**
+
+- Botão "Importar Catálogo" disponível no painel Admin → separador
+  Menu.
+- Lê 150 produtos de `src/data/catalog.js` e envia para a coleção
+  `products` do Firestore.
+- Idempotente (id estável = `prod-${slug}`), com progresso visual
+  e tratamento de erros.
+- Campos garantidos pelo `normalizeProduct()`: `name`, `description`,
+  `price`, `category`, `image_url`, `available`, `stock_enabled`,
+  `stock` (+ `slug`, `created_date`, `updated_date`).
+- Build OK; script Node `seed-products.js` continua a funcionar via
+  re-export.
+
+**Notas de utilização**
+
+1. Abrir a app em `/admin` → separador "Menu".
+2. Clicar em "Importar Catálogo" (botão rosa com ícone de database).
+3. Confirmar no dialog.
+4. Aguardar a barra de progresso chegar a 150/150.
+5. A lista de produtos abaixo é recarregada automaticamente.
+
+Alternativamente, o seed pode ser feito por CLI com
+`node scripts/seed-products.js` (mesmo catálogo, mesma lógica).
