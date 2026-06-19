@@ -1308,3 +1308,128 @@ Fluxo em tempo real (sem refresh):
 - Auditoria de turnos: filtrar por "Hoje" para ver apenas o turno
   atual; "Ontem" para fecho do dia anterior; "Esta Semana" para
   relatório semanal.
+
+---
+
+## 2026-06-20 — Audit Log no fecho + Exportação CSV
+
+**Tarefas executadas**
+
+1. **REJEIÇÃO de funcionalidade**: NÃO implementar botão "Reabrir
+   todas as mesas do dia". Em sistemas POS reais, um novo turno
+   começa naturalmente com mesas a zero; reabrir contas fechadas
+   destrói o fecho de caixa.
+2. **Audit Log** no fecho de conta: gravar `closed_by_email` e
+   `closed_by_uid` em cada pedido quando o staff clica "Limpar Mesa".
+3. **Exportação CSV** no SalesDashboard e AnalyticsPanel: botão
+   "Exportar CSV" que descarrega relatório com Data/Hora, Mesa,
+   Total, Produtos e Staff que fechou.
+
+### 1. Audit Log no fecho de conta
+
+**`src/lib/db.js → closeTableOrders(table, staffUser)`** — assinatura
+atualizada para receber o utilizador autenticado:
+
+- Novo parâmetro `staffUser` com `{ uid, email }`.
+- `_batchClose` agora grava 4 campos em cada pedido:
+  - `tab_status: "closed"` (igual)
+  - `closed_at: <ISO agora>` (igual)
+  - `closed_by_uid: staffUser.uid` (NOVO)
+  - `closed_by_email: staffUser.email` (NOVO)
+  - `updated_date: <ISO agora>` (igual)
+
+**`src/components/admin/TableTab.jsx`** — atualizado:
+- Import de `useAuth` do AuthContext.
+- `handleClearTable` passa `user` como segundo argumento:
+  `await closeTableOrders(tableNumber, user)`.
+- Log inclui o email do staff para auditoria na consola.
+
+**`src/pages/Staff.jsx → ClosedSessionCard`** — adicionada linha
+discreta de auditoria no rodapé da card expandida:
+
+```
+Fechado por: admin@blive.pt
+```
+
+- Lê `closed_by_email` (ou fallback `closed_by_uid`) do primeiro
+  pedido da sessão.
+- Texto pequeno (10px) com cor `muted-foreground/60`.
+- Só aparece se o campo existir (pedidos antigos não quebram).
+
+### 2. Exportação CSV
+
+**`src/lib/csv.js`** — novo módulo com utilitários reutilizáveis:
+- `toCsv(rows, columns)` — converte array de objetos em texto CSV
+  conforme RFC 4180 (escaping de aspas e vírgulas).
+- `downloadCsv(content, filename)` — força download no browser com
+  BOM UTF-8 (necessário para acentos PT abrirem bem em Excel).
+- `formatDateTime(iso)` — formata timestamp ISO para "YYYY-MM-DD HH:MM".
+- `summarizeItems(items)` — resume items em string "2× Caipirinha; 1× Mojito".
+- `csvFilename(prefix)` — gera nome com data atual (ex: `relatorio-vendas-2026-06-20.csv`).
+
+**`src/components/admin/SalesDashboard.jsx`** — atualizado:
+- Import de utilitários CSV + ícone `Download`.
+- `paidOrders` agora filtra por `tab_status === "closed" || status === "pago"` (compatibilidade).
+- `filteredOrders` usa `closed_at || created_date` como referência temporal.
+- `chartData` atualizado para a mesma referência temporal.
+- Novo estado `exporting` para feedback visual.
+- Novo método `handleExportCsv`:
+  - Agrupa pedidos por sessão (mesa + closed_at).
+  - Para cada sessão: calcula total, junta itens, lê staff que fechou.
+  - Constrói CSV com colunas: Data/Hora, Mesa, Total Pago (EUR),
+    Produtos, Staff que fechou.
+  - Total formatado com vírgula decimal (PT) e BOM UTF-8.
+- Novo botão **"Exportar CSV"** na barra de filtros (alinhado à
+  direita via `ml-auto`), com ícone Download e estado disabled
+  quando não há pedidos.
+
+**`src/components/admin/AnalyticsPanel.jsx`** — mesmas atualizações
+para consistência (filtros por `tab_status`, `closed_at` como
+referência temporal, botão Exportar CSV).
+
+### 3. Rejeição de "Reabrir todas as mesas"
+
+Confirmado por grep: **não existe** qualquer referência a "Reabrir
+todas" / "reopen all" no código. Mantemos apenas o botão "Reabir
+Mesa" individual (por sessão específica) — útil para fecho por
+engano, sem destruir o fecho de caixa do turno.
+
+**Estado final**
+
+- Build OK.
+- Pedidos fechados têm agora `closed_by_email` + `closed_by_uid`
+  para auditoria.
+- Histórico do /staff mostra "Fechado por: [email]" em cada card.
+- SalesDashboard e AnalyticsPanel têm botão "Exportar CSV" que
+  descarrega relatório abrível em Excel/Google Sheets com colunas:
+  Data/Hora, Mesa, Total Pago (EUR), Produtos, Staff que fechou.
+
+**Modelo de dados atualizado (orders)**
+
+| Campo | Tipo | Notas |
+| --- | --- | --- |
+| `table` | String | Identificador da mesa |
+| `table_number` | String | Legacy (mantido) |
+| `items[]` | Array | Items do pedido |
+| `total_amount` | Number | Total do pedido |
+| `status` | String | "pendente" (legacy) |
+| `tab_status` | String | "open" / "closed" |
+| `notes` | String? | Observações do cliente |
+| `created_date` | ISO String | Quando foi criado |
+| `updated_date` | ISO String | Última atualização |
+| `closed_at` | ISO String? | Quando foi fechado (se closed) |
+| `closed_by_uid` | String? | **NOVO** — uid do staff que fechou |
+| `closed_by_email` | String? | **NOVO** — email do staff que fechou |
+| `reopened_at` | ISO String? | Se foi reaberta (auditoria) |
+| `_server_created_at` | Timestamp | Server timestamp Firebase |
+
+**Casos de uso cobertos**
+
+- **Auditoria de staff**: dono do bar pode ver quem fechou cada
+  conta no histórico e no CSV exportado.
+- **Fecho de caixa**: no final do turno, exporta CSV do dia para
+  verificar totais contra dinheiro em caixa.
+- **Relatórios contabilísticos**: CSV abre em Excel/Sheets com
+  acentos PT corretos (BOM UTF-8).
+- **Disputa de contas**: se um cliente questionar uma conta, o
+  staff pode ver quem a fechou e quando.

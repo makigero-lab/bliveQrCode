@@ -28,11 +28,13 @@ import {
   Wine,
 } from "lucide-react";
 import { closeTableOrders } from "@/lib/db";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function TableTab({ tableNumber, orders }) {
   const [expanded, setExpanded] = useState(true);
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState("");
+  const { user } = useAuth();
 
   // Total a pagar — soma de todos os pedidos
   const totalAmount = orders.reduce(
@@ -114,9 +116,11 @@ export default function TableTab({ tableNumber, orders }) {
     setError("");
     try {
       console.info(
-        `[TableTab] A fechar mesa ${tableNumber} (${orders.length} pedidos, total €${totalAmount.toFixed(2)})...`
+        `[TableTab] A fechar mesa ${tableNumber} (${orders.length} pedidos, total €${totalAmount.toFixed(2)}, staff=${user?.email})...`
       );
-      const result = await closeTableOrders(tableNumber);
+      // Passa o utilizador autenticado para gravar auditoria:
+      // closed_by_uid + closed_by_email (visíveis no histórico e CSV).
+      const result = await closeTableOrders(tableNumber, user);
       console.info(
         `[TableTab] Mesa ${tableNumber} fechada: ${result.closed} pedidos atualizados.`
       );

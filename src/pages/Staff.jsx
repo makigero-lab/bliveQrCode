@@ -723,6 +723,23 @@ function ClosedSessionCard({ table, closedAt, orders, total }) {
             {formatTime(orders[0]?.created_date)}
           </p>
 
+          {/* Auditoria: quem fechou a conta */}
+          {(() => {
+            // Todos os pedidos da sessão têm o mesmo closed_by_email
+            // (gravado no batch update). Lemos do primeiro.
+            const closedByEmail =
+              orders[0]?.closed_by_email || orders[0]?.closed_by_uid;
+            if (!closedByEmail) return null;
+            return (
+              <p className="text-[10px] text-muted-foreground/60 mt-1 flex items-center gap-1">
+                <span className="opacity-60">Fechado por:</span>
+                <span className="text-muted-foreground font-medium">
+                  {closedByEmail}
+                </span>
+              </p>
+            );
+          })()}
+
           {error && (
             <div className="mt-2 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-[11px] text-red-300">
               {error}

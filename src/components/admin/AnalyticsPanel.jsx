@@ -5,7 +5,8 @@ import {
 } from "recharts";
 import { format, subDays, startOfDay, parseISO, isWithinInterval, endOfDay } from "date-fns";
 import { pt } from "date-fns/locale";
-import { TrendingUp, Euro, ShoppingBag, Clock } from "lucide-react";
+import { TrendingUp, Euro, ShoppingBag, Clock, Download } from "lucide-react";
+import { toCsv, downloadCsv, formatDateTime, summarizeItems, csvFilename } from "@/lib/csv";
 
 const TooltipBox = ({ active, payload, label, prefix = "", suffix = "" }) => {
   if (!active || !payload?.length) return null;
@@ -25,17 +26,98 @@ const RANGES = [
 
 export default function AnalyticsPanel({ orders }) {
   const [range, setRange] = useState("7");
+  const [exporting, setExporting] = useState(false);
 
-  const paidOrders = useMemo(() =>
-    orders.filter((o) => o.status === "pago"),
+  // "Pago" = conta fechada (tab_status="closed"). O `status==="pago"`
+  // é legacy; usamos o novo modelo de Open Tabs.
+  const paidOrders = useMemo(
+    () => orders.filter((o) => o.tab_status === "closed" || o.status === "pago"),
     [orders]
   );
 
   const filteredOrders = useMemo(() => {
     const days = parseInt(range);
     const cutoff = startOfDay(subDays(new Date(), days - 1));
-    return paidOrders.filter((o) => new Date(o.created_date) >= cutoff);
+    return paidOrders.filter((o) => {
+      const ref = o.closed_at || o.created_date;
+      return new Date(ref) >= cutoff;
+    });
   }, [paidOrders, range]);
+
+  // === Exportar CSV ===
+  const handleExportCsv = async () => {
+    if (filteredOrders.length === 0) {
+      alert("Sem pedidos para exportar no período selecionado.");
+      return;
+    }
+
+    setExporting(true);
+    try {
+      // Agrupa por sessão fechada (mesa + closed_at) — uma linha por conta.
+      const sessions = new Map();
+      for (const o of filteredOrders) {
+        const key = `${o.table || o.table_number || "1"}__${o.closed_at || o.updated_date || ""}`;
+        if (!sessions.has(key)) {
+          sessions.set(key, {
+            table: o.table || o.table_number || "1",
+            closed_at: o.closed_at || o.updated_date || o.created_date,
+            orders: [],
+          });
+        }
+        sessions.get(key).orders.push(o);
+      }
+
+      const rows = Array.from(sessions.values()).map((session) => {
+        const total = session.orders.reduce(
+          (s, o) => s + (Number(o.total_amount) || 0),
+          0
+        );
+        const allItems = session.orders.flatMap((o) => o.items || []);
+        const closedBy =
+          session.orders[0]?.closed_by_email ||
+          session.orders[0]?.closed_by_uid ||
+          "";
+
+        return {
+          data_hora: session.closed_at,
+          mesa: session.table,
+          total: total,
+          itens: allItems,
+          staff: closedBy,
+        };
+      });
+
+      const csv = toCsv(rows, [
+        {
+          key: "data_hora",
+          label: "Data/Hora",
+          format: (v) => formatDateTime(v),
+        },
+        { key: "mesa", label: "Mesa" },
+        {
+          key: "total",
+          label: "Total Pago (EUR)",
+          format: (v) => Number(v).toFixed(2).replace(".", ","),
+        },
+        {
+          key: "itens",
+          label: "Produtos",
+          format: (v) => summarizeItems(v),
+        },
+        { key: "staff", label: "Staff que fechou" },
+      ]);
+
+      downloadCsv(csv, csvFilename("analytics-pedidos"));
+      console.info(
+        `[AnalyticsPanel] CSV exportado: ${rows.length} sessões, ${filteredOrders.length} pedidos.`
+      );
+    } catch (err) {
+      console.error("[AnalyticsPanel] Erro ao exportar CSV:", err);
+      alert(`Erro ao exportar: ${err?.message || ""}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // KPIs
   const totalRevenue = filteredOrders.reduce((s, o) => s + (o.total_amount || 0), 0);
@@ -56,7 +138,10 @@ export default function AnalyticsPanel({ orders }) {
       };
     }
     filteredOrders.forEach((o) => {
-      const key = format(new Date(o.created_date), "yyyy-MM-dd");
+      // Usa closed_at como referência (data de fecho) se disponível;
+      // senão created_date (legacy).
+      const ref = o.closed_at || o.created_date;
+      const key = format(new Date(ref), "yyyy-MM-dd");
       if (map[key]) {
         map[key].revenue += o.total_amount || 0;
         map[key].orders += 1;
@@ -88,7 +173,9 @@ export default function AnalyticsPanel({ orders }) {
       map[h] = { hour: `${String(h).padStart(2, "0")}h`, orders: 0 };
     }
     filteredOrders.forEach((o) => {
-      const h = new Date(o.created_date).getHours();
+      // Volume por hora baseado na data de fecho (ou criação legacy)
+      const ref = o.closed_at || o.created_date;
+      const h = new Date(ref).getHours();
       map[h].orders += 1;
     });
     // Only show hours with activity ±2h buffer
@@ -112,8 +199,8 @@ export default function AnalyticsPanel({ orders }) {
 
   return (
     <div className="space-y-5">
-      {/* Range selector */}
-      <div className="flex gap-2">
+      {/* Range selector + Exportar */}
+      <div className="flex flex-wrap gap-2 items-center">
         {RANGES.map((r) => (
           <button
             key={r.value}
@@ -127,6 +214,22 @@ export default function AnalyticsPanel({ orders }) {
             {r.label}
           </button>
         ))}
+        {/* Botão Exportar CSV — alinhado à direita */}
+        <div className="ml-auto">
+          <button
+            onClick={handleExportCsv}
+            disabled={exporting || filteredOrders.length === 0}
+            title={
+              filteredOrders.length === 0
+                ? "Sem pedidos para exportar"
+                : `Exportar ${filteredOrders.length} pedido(s) para CSV`
+            }
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border border-border bg-card text-foreground hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Download className="w-3.5 h-3.5" />
+            {exporting ? "A exportar..." : "Exportar CSV"}
+          </button>
+        </div>
       </div>
 
       {/* KPIs */}

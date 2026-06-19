@@ -433,14 +433,26 @@ function subscribeByTabStatus(tabStatus, callback) {
 /**
  * Fecha uma mesa: atualiza TODOS os pedidos com `tab_status == 'open'`
  * da mesa indicada para `tab_status == 'closed'`, em batch (400 em 400).
- * Define também `closed_at` com a data atual.
+ *
+ * Define também:
+ *   - `closed_at` com a data atual (ISO string).
+ *   - `closed_by_uid` com o uid do Firebase Auth do staff que fechou.
+ *   - `closed_by_email` com o email do staff que fechou.
+ *
+ * Estes campos de auditoria são usados pelo histórico do /staff e
+ * pelo CSV exportado pelo painel de Vendas.
  *
  * @param {string} table — número/identificador da mesa
+ * @param {object} [staffUser] — utilizador autenticado que fecha a mesa
+ * @param {string} [staffUser.uid]
+ * @param {string} [staffUser.email]
  * @returns {Promise<{closed: number}>}
  */
-export async function closeTableOrders(table) {
+export async function closeTableOrders(table, staffUser) {
   const tableStr = String(table);
   const now = new Date().toISOString();
+  const closedByUid = staffUser?.uid || null;
+  const closedByEmail = staffUser?.email || null;
 
   const q = query(
     collection(db, "orders"),
@@ -457,13 +469,13 @@ export async function closeTableOrders(table) {
       where("table_number", "==", tableStr)
     );
     const snap2 = await getDocs(q2);
-    return _batchClose(snap2.docs, now);
+    return _batchClose(snap2.docs, now, closedByUid, closedByEmail);
   }
 
-  return _batchClose(snap.docs, now);
+  return _batchClose(snap.docs, now, closedByUid, closedByEmail);
 }
 
-async function _batchClose(docs, isoNow) {
+async function _batchClose(docs, isoNow, closedByUid, closedByEmail) {
   const BATCH_SIZE = 400;
   let closed = 0;
 
@@ -474,6 +486,8 @@ async function _batchClose(docs, isoNow) {
       batch.update(d.ref, {
         tab_status: "closed",
         closed_at: isoNow,
+        closed_by_uid: closedByUid,
+        closed_by_email: closedByEmail,
         updated_date: isoNow,
       });
     });
