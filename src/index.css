@@ -4,28 +4,64 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap');
 
+/*
+ * Tema visual do bliveQrCode — extraído das cartas do B'Live Lounge Bar.
+ *
+ * Os 3 PDFs publicados em bliveloungebar.com partilham uma estética
+ * nightlife lounge:
+ *   - Fundo preto profundo (#000000)
+ *   - Texto principal branco / cinza claro
+ *   - Acento primário: B'Live Pink (#E91E8C) — cor de marca
+ *   - Acento secundário: vermelho vibrante (#FF1A1A) — usado nos
+ *     PDFs de shisha e comida para chamar atenção a preços/highlights
+ *   - Dourado subtil para a hierarquia tipográfica (títulos Playfair)
+ *
+ * As cores são expressas em HSL (H S% L%) para permitir que o
+ * Tailwind manipule opacidade dinamicamente (ex: bg-primary/20).
+ */
+
 @layer base {
   :root {
-    --background: 0 0% 0%;
-    --foreground: 0 0% 96%;
-    --card: 0 0% 6%;
+    /* Background / surfaces — preto profundo */
+    --background: 0 0% 0%;            /* #000000 */
+    --foreground: 0 0% 96%;           /* #F5F5F5 */
+
+    --card: 0 0% 6%;                  /* #0F0F0F */
     --card-foreground: 0 0% 96%;
     --popover: 0 0% 6%;
     --popover-foreground: 0 0% 96%;
+
+    /* Acento primário — B'Live Pink (#E91E8C) */
     --primary: 328 82% 52%;
     --primary-foreground: 0 0% 100%;
+
+    /* Acento secundário — vermelho vibrante (#FF1A1A) */
+    --accent-red: 0 100% 55%;
+    --accent-red-foreground: 0 0% 100%;
+
+    /* Secondary — cinza escuro para botões neutros */
     --secondary: 0 0% 11%;
     --secondary-foreground: 0 0% 96%;
+
     --muted: 0 0% 11%;
     --muted-foreground: 0 0% 50%;
+
+    /* Accent — rosa escuro para superfícies destacadas */
     --accent: 328 60% 25%;
     --accent-foreground: 0 0% 96%;
-    --destructive: 0 72% 51%;
+
+    /* Destructive — vermelho erro (igual ao accent-red) */
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 96%;
+
+    /* Borders / inputs — cinza muito escuro */
     --border: 0 0% 15%;
     --input: 0 0% 15%;
     --ring: 328 82% 52%;
+
     --radius: 0.75rem;
+
+    /* Vars legacy para componentes antigos */
     --gold: 328 82% 52%;
     --gold-light: 328 90% 70%;
     --gold-dark: 328 60% 30%;
@@ -39,6 +75,21 @@
 
   body {
     @apply bg-background text-foreground font-inter;
+    /* Subtle radial gradient no fundo, como nos PDFs */
+    background-image:
+      radial-gradient(circle at 15% 0%, rgba(233, 30, 140, 0.08), transparent 40%),
+      radial-gradient(circle at 85% 100%, rgba(255, 26, 26, 0.05), transparent 40%);
+    background-attachment: fixed;
+  }
+
+  /* Tipografia de display (títulos principais) — Playfair Display */
+  .font-playfair {
+    font-family: 'Playfair Display', Georgia, serif;
+    letter-spacing: 0.01em;
+  }
+
+  .font-inter {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
   }
 }
 
@@ -55,5 +106,21 @@
   }
   .pb-safe {
     padding-bottom: env(safe-area-inset-bottom, 16px);
+  }
+
+  /* Brilho vermelho (estilo nightlife dos PDFs de shisha/comida) */
+  .glow-red {
+    box-shadow: 0 0 24px rgba(255, 26, 26, 0.35);
+  }
+  .glow-pink {
+    box-shadow: 0 0 24px rgba(233, 30, 140, 0.35);
+  }
+
+  /* Texto com gradiente B'Live (rosa → vermelho) */
+  .text-gradient-blive {
+    background: linear-gradient(135deg, #E91E8C 0%, #FF1A1A 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
 }

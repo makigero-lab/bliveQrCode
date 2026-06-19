@@ -30,10 +30,41 @@ npm install
 Não são necessárias. A configuração do Firebase está embutida em
 `src/lib/firebase.js` (projectId: `autocell-535c2`).
 
+> ⚠️ **Pré-requisito**: a base de dados Firestore tem de existir no
+> projeto Firebase antes de executarmos a app ou o script de seed.
+> Se ainda não foi criada, ir a
+> <https://console.firebase.google.com/project/autocell-535c2/firestore>
+> e clicar em **Create database** (modo produção ou teste).
+
 > ⚠️ **Regras de segurança do Firestore**: para a demo funcionar, as
 > regras do Firestore devem permitir leitura e escrita públicas nas
 > coleções `products`, `orders` e `settings`. Em produção, convém
 > restringir a escrita a utilizadores autenticados com role admin.
+
+## Popular a base de dados com a carta do B'Live
+
+O repositório inclui o catálogo completo extraído das 3 cartas oficiais
+do B'Live Lounge Bar (PDFs publicados em `bliveloungebar.com`):
+carta principal (cocktails, bebidas espirituosas, vinhos, etc.),
+carta de shishas e carta de comida.
+
+Para popular a coleção `products` no Firestore:
+
+```bash
+npm install
+node scripts/seed-products.js            # adiciona produtos novos
+# ou, para apagar tudo e recomeçar:
+node scripts/seed-products.js --reset
+```
+
+O script é **idempotente**: não duplica produtos com o mesmo `slug`.
+Total: **150 produtos** prontos a usar.
+
+Quando tiveres fotografias profissionais dos produtos, substitui o
+campo `image_url` (atualmente com placeholders da Unsplash) por URLs
+das fotos reais — podes editar produto a produto no painel Admin, ou
+alterar diretamente o ficheiro `scripts/catalog.js` e voltar a
+correr o seed com `--reset`.
 
 ## Scripts
 

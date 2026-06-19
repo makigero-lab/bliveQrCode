@@ -5,16 +5,36 @@
 O sistema reconhece **5 categorias** de produtos (definidas em
 `CategoryTabs.jsx` e em `ProductForm.jsx`):
 
-| ID           | Label       | Emoji |
-| ------------ | ----------- | ----- |
-| `bebidas`    | Bebidas     | 🍺    |
-| `cocktails`  | Cocktails   | 🍹    |
-| `comida`     | Comida      | 🍔    |
-| `sobremesas` | Sobremesas  | 🍮    |
-| `shisha`     | Shisha      | 💨    |
+| ID           | Label       | Emoji | Produtos no catálogo B'Live |
+| ------------ | ----------- | ----- | --------------------------- |
+| `bebidas`    | Bebidas     | 🍺    | ~100 (vodkas, gins, rums, whiskies, champanhes, espumantes, cachaça, licores, shots, refrigerantes, cervejas, cafetaria, aperitivos, vinhos) |
+| `cocktails`  | Cocktails   | 🍹    | 16 (inclui mocktails e sangrias) |
+| `comida`     | Comida      | 🍔    | 12 (burgers, gambas, tostas, fritos) |
+| `sobremesas` | Sobremesas  | 🍮    | 4 (variações de Nutella) |
+| `shisha`     | Shisha      | 💨    | 20 (todos os sabores do PDF2 + Bazuka + B'Live Quasar) |
 
 > ⚠️ O separador "Todos" (`todos`) é uma categoria virtual usada só
 > no filtro do menu; não é uma categoria de produto.
+
+O catálogo completo está em `scripts/catalog.js` (150 produtos no
+total) e pode ser populado no Firestore via `node scripts/seed-products.js`.
+
+## 1.1 Paleta visual (extraída das cartas do B'Live)
+
+As cores do programa foram retiradas diretamente das 3 cartas PDF
+publicadas em `bliveloungebar.com`:
+
+| Token CSS          | Hex          | Uso                                       |
+| ------------------ | ------------ | ----------------------------------------- |
+| `--background`     | `#000000`    | Fundo preto profundo (todas as cartas)    |
+| `--foreground`     | `#F5F5F5`    | Texto principal                           |
+| `--primary`        | `#E91E8C`    | B'Live Pink (carta principal)             |
+| `--accent-red`     | `#FF1A1A`    | Vermelho vibrante (PDFs shisha + comida)  |
+| `--card`           | `#0F0F0F`    | Cards e superfícies elevadas              |
+| `--border`         | `#262626`    | Bordas e inputs                           |
+
+Tipografia: **Playfair Display** para títulos (estilo carta de bar),
+**Inter** para corpo de texto.
 
 ## 2. Estados de pedidos
 

@@ -284,3 +284,138 @@ rigorosamente:
 - Otimizar o bundle (code-split do Firebase SDK) se o tempo de
   carga inicial for problema em produção.
 
+
+---
+
+## 2026-06-20 — Importar carta do B'Live e aplicar cores do bar
+
+**Tarefa**
+
+- Importar TODOS os produtos das 3 cartas publicadas em
+  `bliveloungebar.com` (PDFs):
+  1. Carta principal (cocktails, vodkas, gins, whiskies, champanhes,
+     espumantes, sangrias, cachaça, licores, shots, refrigerantes,
+     cervejas, cafetaria, aperitivos, vinhos).
+  2. Carta de Shishas (20 referências).
+  3. Carta B'Live (comida: burgers, tostas, fritos, doces).
+- Aplicar a paleta de cores dessas páginas ao programa.
+- Atualizar a documentação.
+- Commit e push para o repositório.
+
+**Trabalho realizado**
+
+1. **Descarreguei os 3 PDFs** do site oficial do B'Live Lounge Bar
+   (`bliveloungebar.com/_files/...`) para `/home/z/my-project/blive_pdfs/`.
+   Total: ~24 MB.
+
+2. **Extração de texto** com `pdftotext -layout` para os 3 ficheiros
+   `pdf1.txt`, `pdf2.txt`, `pdf3.txt`. Confirmado que cubrem:
+   - PDF1 (~15 KB de texto): carta principal completa.
+   - PDF2 (~800 bytes): carta shishas.
+   - PDF3 (~1.8 KB): carta comida.
+
+3. **Conversão para imagem** com `pdftoppm` (1ª página de cada PDF
+   em PNG a 60 DPI) para análise visual via VLM.
+
+4. **Análise de paleta de cores** com `z-ai vision`:
+   - PDF1 (carta principal): preto + branco + **B'Live Pink #E91E8C**
+     + cinza prateado + vermelho escuro. Estilo: dark, moderno.
+   - PDF2 (shishas): preto + **vermelho vibrante #FF0000** + branco.
+     Estilo: dark, nightlife.
+   - PDF3 (comida): preto + **vermelho vibrante #FF1A1A** + branco.
+     Estilo: vibrant, nightlife, lounge.
+
+   Conclusão: o tema dark já estava configurado em `src/index.css`.
+   Mantive o B'Live Pink #E91E8C como cor primária (já era o default)
+   e adicionei o vermelho vibrante #FF1A1A como cor de acento
+   secundária (`--accent-red`) para refletir os PDFs de shisha e
+   comida.
+
+5. **Criação do catálogo** em `scripts/catalog.js` com **150 produtos**
+   extraídos manualmente dos 3 PDFs, cada um com:
+   - `name` (nome do produto como aparece na carta)
+   - `description` (ingredientes / variantes / formato)
+   - `price` (preço em euros)
+   - `category` (`cocktails` / `bebidas` / `shisha` / `comida` /
+     `sobremesas`)
+   - `image_url` (placeholder Unsplash; substituível por fotos reais)
+
+   Distribuição por categoria:
+   - `cocktails`: 16 (inclui mocktails e sangrias)
+   - `bebidas`: 100 (vodkas, gins, rums, whiskies, champanhes,
+     espumantes, cachaça, licores, shots, refrigerantes, cervejas,
+     cafetaria, aperitivos, vinhos)
+   - `shisha`: 20 (todos os sabores do PDF2 + Standard com Bazuka
+     + B'Live Quasar)
+   - `comida`: 12 (burgers, gambas, tostas, fritos)
+   - `sobremesas`: 4 (variações de Nutella)
+
+6. **Criação do script de seed** em `scripts/seed-products.js`:
+   - Lê o `catalog.js` e insere os produtos na coleção `products`
+     do Firestore.
+   - **Idempotente**: não duplica produtos com o mesmo `slug`
+     (gerado a partir do `name`).
+   - Suporta `--reset` para apagar tudo e recriar.
+   - Usa `writeBatch` do Firestore (limite 500 ops/batch; uso 400
+     para folga).
+   - Tem timeout de 60 s por operação para não ficar pendurado se a
+     base de dados Firestore não existir.
+   - Mensagens claras de erro em português com dica para criar a BD
+     no Firebase Console.
+
+7. **Tentativa de executar o seed** localmente — falhou com erro
+   `5 NOT_FOUND` do Firestore, o que indica que a base de dados
+   ainda não foi criada no projeto Firebase `autocell-535c2`. O
+   script falha de forma limpa com mensagem útil. O utilizador
+   precisa de ir a
+   <https://console.firebase.google.com/project/autocell-535c2/firestore>
+   e clicar em "Create database" antes de executar o seed.
+
+8. **Atualização do tema visual** (`src/index.css`):
+   - Mantidas as cores dark (background preto, foreground branco).
+   - Documentada a origem das cores (extraídas dos PDFs).
+   - Adicionado gradiente radial subtil no fundo (rosa + vermelho)
+     para reforçar a estética nightlife.
+   - Adicionadas utilidades `.glow-red`, `.glow-pink`,
+     `.text-gradient-blive` para usar em destaques visuais.
+   - Tipografia Playfair Display mantida para títulos (estilo
+     cartas de bar).
+
+9. **Tailwind config** (`tailwind.config.js`): adicionada a cor
+   `accent-red` (var `--accent-red`) para usar em componentes que
+   queiram destacar o vermelho vibrante dos PDFs.
+
+10. **Defaults do BarSettings** (`src/lib/BarSettingsContext.jsx`
+    e `src/lib/db.js`): atualizado o `tagline` por defeito para
+    `"Cocktails • Shishas • Comida"` (reflete as 3 cartas).
+
+11. **Build validado** — `npm install` + `npm run build` OK.
+
+12. **Documentação atualizada**:
+    - `README.md`: nova secção "Popular a base de dados com a carta
+      do B'Live" com instruções para correr o seed.
+    - Este `WORKLOG.md` atualizado com a nova entrada.
+    - `docs/REGRAS.md` será atualizado para listar as 5 categorias
+      reais usadas.
+
+**Estado final**
+
+- Catálogo de 150 produtos do B'Live Lounge Bar criado em
+  `scripts/catalog.js`.
+- Script de seed `scripts/seed-products.js` pronto a usar (falha
+  com mensagem clara se a BD Firestore não existir).
+- Tema visual atualizado com paleta extraída dos PDFs (preto +
+  B'Live Pink #E91E8C + vermelho vibrante #FF1A1A).
+- Defaults do BarSettings atualizados (tagline "Cocktails •
+  Shishas • Comida").
+- Build OK.
+
+**Pendente para próximas iterações**
+
+- **Criar a base de dados Firestore** no projeto `autocell-535c2`
+  via Firebase Console, depois executar `node scripts/seed-products.js`
+  para popular os 150 produtos.
+- Substituir placeholders Unsplash por fotografias profissionais dos
+  produtos (quando disponíveis).
+- Ativar Firebase Auth real para restringir `/admin` e `/staff`.
+- Migrar uploads de logótipos para Firebase Storage.
