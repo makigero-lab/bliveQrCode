@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, RefreshCw, LayoutGrid, ClipboardList, QrCode, Trash2, Pencil, Wine, BarChart2, Settings, Wifi, PackageOpen, LineChart, Users, LogOut } from "lucide-react";
+import { Plus, RefreshCw, LayoutGrid, ClipboardList, QrCode, Trash2, Pencil, Wine, BarChart2, Settings, Wifi, PackageOpen, LineChart, Users, LogOut, Wrench } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import OrderCard from "@/components/admin/OrderCard";
 import ProductForm from "@/components/admin/ProductForm";
@@ -13,6 +13,7 @@ import ClearAllProductsButton from "@/components/admin/ClearAllProductsButton";
 import ClearAllOrdersButton from "@/components/admin/ClearAllOrdersButton";
 import BulkProductEditor from "@/components/admin/BulkProductEditor";
 import UsersPanel from "@/components/admin/UsersPanel";
+import BootstrapButton from "@/components/admin/BootstrapButton";
 import { useBarSettings } from "@/lib/BarSettingsContext";
 import { useAuth } from "@/lib/AuthContext";
 import {
@@ -35,6 +36,7 @@ const ALL_TABS = [
   { id: "qr", label: "QR", icon: QrCode, adminOnly: true },
   { id: "settings", label: "Config.", icon: Settings, adminOnly: true },
   { id: "users", label: "Utilizadores", icon: Users, adminOnly: true },
+  { id: "system", label: "Sistema", icon: Wrench, adminOnly: true },
 ];
 
 const statusOrder = ["pendente", "confirmado", "em_preparacao", "pronto", "pago"];
@@ -378,6 +380,19 @@ export default function Admin() {
 
         {/* USERS TAB — só visível para admin (filtro em `tabs` acima) */}
         {tab === "users" && <UsersPanel />}
+
+        {/* SYSTEM TAB — setup inicial, bootstrap, diagnóstico */}
+        {tab === "system" && (
+          <div className="space-y-4">
+            <div>
+              <h2 className="font-semibold text-lg">Sistema</h2>
+              <p className="text-muted-foreground text-sm mt-1">
+                Ferramentas de setup e diagnóstico da base de dados.
+              </p>
+            </div>
+            <BootstrapButton />
+          </div>
+        )}
       </div>
 
       <AnimatePresence>

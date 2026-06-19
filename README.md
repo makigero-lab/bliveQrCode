@@ -1,21 +1,21 @@
 # bliveQrCode
 
 Aplicação web para **menu digital com QR code** dirigida a bares e
-restaurantes. O cliente abre a página `/menu?mesa=N`, escolhe os
-produtos e envia o pedido; o staff acompanha em tempo real na página
-`/staff` e a gestão completa é feita em `/admin`.
+restaurantes. O cliente abre a página `/menu?m=<id>` (lê o QR code da
+mesa), escolhe os produtos e envia o pedido; o staff acompanha em
+tempo real na página `/staff` (Contas por Mesa / Open Tabs) e a gestão
+completa é feita em `/admin`.
 
-> ℹ️ **Arquitetura atual**: a app foi migrada de **Base44** para
-> **Firebase Firestore**. A persistência é multi-utilizador (todos os
-> dispositivos partilham a mesma base de dados Firebase) e a
-> sincronização é em tempo real via `onSnapshot`. A autenticação foi
-> desativada (modo demo) para permitir acesso livre a `/admin` e
-> `/staff`. Ver secção [Arquitetura](#arquitetura).
+> ℹ️ **Arquitetura atual**: Firebase Firestore + Firebase Auth
+> (Email/Password). Persistência multi-utilizador com sincronização em
+> tempo real via `onSnapshot`. Autenticação real com roles (`admin` /
+> `staff`) guardadas na coleção `users`.
 
 ## Requisitos
 
 - Node.js 18 ou superior
 - npm 9 ou superior
+- Conta no Firebase (já configurada: projeto `autocell-535c2`)
 
 ## Instalação
 
@@ -30,41 +30,195 @@ npm install
 Não são necessárias. A configuração do Firebase está embutida em
 `src/lib/firebase.js` (projectId: `autocell-535c2`).
 
-> ⚠️ **Pré-requisito**: a base de dados Firestore tem de existir no
-> projeto Firebase antes de executarmos a app ou o script de seed.
-> Se ainda não foi criada, ir a
-> <https://console.firebase.google.com/project/autocell-535c2/firestore>
-> e clicar em **Create database** (modo produção ou teste).
+---
 
-> ⚠️ **Regras de segurança do Firestore**: para a demo funcionar, as
-> regras do Firestore devem permitir leitura e escrita públicas nas
-> coleções `products`, `orders` e `settings`. Em produção, convém
-> restringir a escrita a utilizadores autenticados com role admin.
+## 🚀 Setup completo (passo a passo)
+
+> Lê esta secção toda antes de começar. Demora ~10 minutos.
+
+### Passo 1 — Criar a base de dados Firestore
+
+As coleções **não existem automaticamente**. Precisas de criar a
+base de dados Firestore no projeto Firebase primeiro:
+
+1. Abrir <https://console.firebase.google.com/project/autocell-535c2/firestore>.
+2. Clicar em **"Create database"**.
+3. Escolher modo **"Test"** (regras abertas por 30 dias — bom para
+   começar) ou **"Production"** (regras restritas — terás de as
+   configurar manualmente conforme o Passo 4).
+4. Região: `europe-west1` (recomendado para Portugal).
+
+### Passo 2 — Ativar Email/Password no Firebase Auth
+
+1. Abrir <https://console.firebase.google.com/project/autocell-535c2/authentication/sign-in-method>.
+2. Clicar em **Email/Password**.
+3. Ativar a primeira toggle (**Email/Password**) → **Save**.
+
+### Passo 3 — Correr o script de bootstrap (cria tudo)
+
+No terminal, dentro da pasta do projeto:
+
+```bash
+node scripts/bootstrap.js
+```
+
+O script vai:
+
+1. **Testar ligação ao Firestore** (se falhar, lê a mensagem de erro).
+2. **Criar `settings/bar`** com configuração padrão do B'Live
+   (nome, cor, tagline).
+3. **Pedir-te email + password** para criar o primeiro admin (conta
+   Firebase Auth + perfil em `users/` com `role: "admin"`).
+4. **Criar 10 mesas** na coleção `tables` com IDs seguros de 8 chars.
+5. **Popular `products`** com os 150 produtos do catálogo B'Live.
+
+Em alternativa, podes passar as credenciais via variáveis de ambiente
+(útil para automação):
+
+```bash
+ADMIN_EMAIL=admin@blive.pt ADMIN_PASSWORD=senha123 node scripts/bootstrap.js
+```
+
+> 💡 O script é **idempotente**: podes corrê-lo várias vezes sem
+> duplicar dados.
+
+### Passo 4 — Configurar regras de segurança (recomendado)
+
+Por defeito, a base de dados está em modo "Test" (tudo aberto). Para
+produção, aplica estas regras em
+<https://console.firebase.google.com/project/autocell-535c2/firestore/rules>:
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Mesas: leitura pública (para /menu validar ?m=), escrita só admin
+    match /tables/{id} {
+      allow read: if true;
+      allow write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+    // Users: leitura do próprio + admin; escrita só admin
+    match /users/{uid} {
+      allow read: if request.auth != null &&
+        (request.auth.uid == uid ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin");
+      allow write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+    // Products: leitura pública; escrita só admin
+    match /products/{id} {
+      allow read: if true;
+      allow write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+    // Orders: leitura auth; create público (clientes enviam); update/delete auth
+    match /orders/{id} {
+      allow read: if request.auth != null;
+      allow create: if true;
+      allow update, delete: if request.auth != null;
+    }
+    // Settings: leitura pública; escrita só admin
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+  }
+}
+```
+
+### Passo 5 — Correr a app localmente
+
+```bash
+npm run dev
+```
+
+Abrir <http://localhost:5173> → redireciona para `/login` → faz login
+com as credenciais do admin criado no Passo 3.
+
+### Passo 6 — Deploy na Vercel
+
+1. Push do código para GitHub (já feito pelo assistente).
+2. Em <https://vercel.com>, importar o repositório.
+3. Framework preset: **Vite**. Build command: `npm run build`. Output
+   directory: `dist`.
+4. Deploy. A app fica disponível em `https://blive-qr-code.vercel.app`
+   (ou semelhante).
+
+---
+
+## 🆘 Troubleshooting
+
+### "Mesa Inválida" no `/menu`
+
+- Verifica que o URL tem `?m=<id>` (não `?mesa=N` — esse formato é
+  legacy).
+- Verifica que a mesa existe na coleção `tables` em
+  <https://console.firebase.google.com/project/autocell-535c2/firestore/data/~2Ftables>.
+- Gera novos QR codes em `/admin → QR → Adicionar mesa`.
+
+### "auth/configuration-not-found" no login
+
+- Email/Password não está ativado. Volta ao Passo 2.
+
+### "permission-denied" ao ler produtos
+
+- Regras de segurança do Firestore estão restritas. Aplica as regras
+  do Passo 4 (ou usa modo "Test" temporariamente).
+
+### Pedidos não aparecem no `/staff`
+
+- Abre o DevTools (F12) → Console. Procura por `[Staff][open]`.
+- Se não houver eventos, é problema de regras do Firestore em `orders`.
+  Clients não autenticados precisam de permissão de `create`.
+
+### Esqueci-me da password do admin
+
+- Em <https://console.firebase.google.com/project/autocell-535c2/authentication/users>,
+  clica no user → "Reset password" → envia email de reset.
+
+---
 
 ## Popular a base de dados com a carta do B'Live
 
-O repositório inclui o catálogo completo extraído das 3 cartas oficiais
-do B'Live Lounge Bar (PDFs publicados em `bliveloungebar.com`):
-carta principal (cocktails, bebidas espirituosas, vinhos, etc.),
-carta de shishas e carta de comida.
-
-Para popular a coleção `products` no Firestore:
+Já feito pelo script `bootstrap.js` (Passo 3 acima). Se quiseres
+repovoar só a coleção `products` (sem mexer nas mesas/admin):
 
 ```bash
-npm install
 node scripts/seed-products.js            # adiciona produtos novos
-# ou, para apagar tudo e recomeçar:
-node scripts/seed-products.js --reset
+node scripts/seed-products.js --reset    # apaga tudo e recriia
 ```
-
-O script é **idempotente**: não duplica produtos com o mesmo `slug`.
-Total: **150 produtos** prontos a usar.
 
 Quando tiveres fotografias profissionais dos produtos, substitui o
 campo `image_url` (atualmente com placeholders da Unsplash) por URLs
-das fotos reais — podes editar produto a produto no painel Admin, ou
-alterar diretamente o ficheiro `scripts/catalog.js` e voltar a
-correr o seed com `--reset`.
+das fotos reais — podes editar produto a produto no painel Admin
+(separador Menu → Editor visual), ou alterar diretamente o ficheiro
+`src/data/catalog.js` e voltar a correr o bootstrap.
+
+## Setup via UI (alternativa ao CLI)
+
+Se preferires não usar o terminal, podes fazer o setup inicial pelo
+painel Admin:
+
+1. Cria o primeiro admin manualmente em
+   <https://console.firebase.google.com/project/autocell-535c2/authentication/users>
+   (Add user).
+2. Copia o `uid` gerado.
+3. Em
+   <https://console.firebase.google.com/project/autocell-535c2/firestore/data>,
+   cria manualmente a coleção `users` com um documento:
+   - **Document ID**: o `uid` do passo 2
+   - **Fields**: `email` (string), `role` (string = "admin"),
+     `created_date` (string = `2026-06-20T00:00:00.000Z`)
+4. Faz login na app com esse admin.
+5. Vai a `/admin → Sistema` e clica em **"Criar coleções em falta"**.
+   O botão verifica o estado de cada coleção e cria `settings`,
+   `tables` (10 mesas) e `products` (150 produtos) conforme necessário.
+
+> ⚠️ O botão "Sistema" **não** cria utilizadores (porque criar user
+> afeta a sessão atual do Firebase Auth). Para criar mais admins/staff
+> depois do primeiro, usa o separador **Utilizadores** no painel Admin.
 
 ## Scripts
 

@@ -1156,3 +1156,62 @@ bypass demo):
 - Apagar utilizadores remove apenas o perfil Firestore. A conta
   Auth fica órfã (sem perfil → login falha). Para apagar
   completamente, usar Firebase Console.
+
+---
+
+## 2026-06-20 — Bootstrap script + Setup via UI + README reescrito
+
+**Problema reportado pelo utilizador**
+
+"As coleções não existem no Firestore." — As coleções Firestore são
+criadas lazy (só quando se insere o primeiro documento). Sem dados
+iniciais, a app mostra ecrãs vazios e o login falha porque não há
+admin em `users/`.
+
+**Solução**
+
+1. **`scripts/bootstrap.js`** — script único que prepara TODA a base
+   de dados numa só execução:
+   - Testa ligação ao Firestore (falha com mensagem útil se a BD não
+     existir).
+   - Cria `settings/bar` com config padrão do B'Live.
+   - Pede email + password (interativamente ou via env vars
+     `ADMIN_EMAIL`/`ADMIN_PASSWORD`) e cria o primeiro admin:
+     `createUserWithEmailAndPassword` + `setUserProfile({role:"admin"})`.
+   - Cria 10 mesas com IDs seguros de 8 chars.
+   - Popula `products` com os 150 produtos do catálogo B'Live.
+   - Idempotente: pode ser corrido várias vezes.
+   - Mostra resumo final + regras de segurança recomendadas.
+
+2. **`src/components/admin/BootstrapButton.jsx`** — botão de setup
+   via UI (alternativa ao CLI):
+   - Verifica contagem de docs em cada coleção (settings, tables,
+     products, users, orders).
+   - Mostra grid com estado de cada coleção (✓/⚠/erro).
+   - Botão "Criar coleções em falta" que cria settings, tables (10)
+     e products (150) — mas NÃO cria utilizadores (porque isso
+     afeta a sessão atual do Firebase Auth).
+   - Link para Firebase Console + instruções para criar o primeiro
+     admin manualmente.
+   - Integrado no novo separador "Sistema" do Admin.jsx.
+
+3. **`src/pages/Admin.jsx`** — adicionado separador "Sistema"
+   (adminOnly) com `<BootstrapButton />`.
+
+4. **`README.md`** — reescrita da secção de setup:
+   - Passo 1: Criar Firestore DB (modo Test).
+   - Passo 2: Ativar Email/Password em Authentication.
+   - Passo 3: `node scripts/bootstrap.js`.
+   - Passo 4: Regras de segurança (snippet completo).
+   - Passo 5: `npm run dev`.
+   - Passo 6: Deploy Vercel.
+   - Secção "Troubleshooting" com 5 problemas comuns e soluções.
+   - Alternativa "Setup via UI" para quem prefere não usar terminal.
+
+**Estado final**
+
+- Build OK.
+- Script de bootstrap testado localmente (carrega sem erros; falha
+  graciosamente se a BD Firestore não existir, com mensagem útil).
+- Botão de setup disponível em `/admin → Sistema` (após primeiro login).
+- README tem guia completo passo-a-passo.
