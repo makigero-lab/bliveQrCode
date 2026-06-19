@@ -1,0 +1,21 @@
+{
+  "name": "BarSettings",
+  "type": "object",
+  "properties": {
+    "bar_name": {
+      "type": "string",
+      "default": "B'Live Lounge Bar"
+    },
+    "primary_color": {
+      "type": "string",
+      "default": "#E91E8C"
+    },
+    "logo_url": {
+      "type": "string"
+    },
+    "tagline": {
+      "type": "string"
+    }
+  },
+  "required": []
+}

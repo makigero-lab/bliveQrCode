@@ -1,0 +1,45 @@
+{
+  "name": "Product",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "price": {
+      "type": "number"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "bebidas",
+        "cocktails",
+        "comida",
+        "sobremesas",
+        "shisha"
+      ]
+    },
+    "image_url": {
+      "type": "string"
+    },
+    "available": {
+      "type": "boolean",
+      "default": true
+    },
+    "stock_enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "stock": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": [
+    "name",
+    "price",
+    "category"
+  ]
+}
