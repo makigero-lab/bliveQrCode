@@ -1672,3 +1672,83 @@ Isto significa que:
 - Fluxo de pedidos: recebido → pronto → entregue com botões
   visíveis em cada pedido no /staff.
 - Merge automático de pedidos "recebido" da mesma mesa.
+
+---
+
+## 2026-06-20 — Indicador visual de tab_status no OrderCard
+
+**Tarefa**
+
+Melhorar a distinção visual entre contas abertas (tab_status="open")
+e fechadas (tab_status="closed") nos cartões de pedido do painel
+Admin. Foco apenas no aspeto visual — restantes otimizações
+(performance, reset password) ficam para o roadmap pós-lançamento.
+
+**Alterações**
+
+**`src/components/admin/OrderCard.jsx`** — adicionado indicador de
+destaque no topo de cada cartão:
+
+1. **Faixa full-width no topo** (acima do cabeçalho mesa/estado):
+   - `tab_status === "open"` → fundo verde claro + texto verde +
+     ícone `CircleDot` + label "MESA ATIVA · ABERTA"
+   - `tab_status === "closed"` → fundo cinzento/muted + texto
+     muted + ícone `CheckCircle2` + label "CONTA PAGA · FECHADA"
+   - À direita mostra o ID do pedido (6 chars) com ícone `Receipt`
+     para referência rápida.
+
+2. **Borda esquerda do cartão colorida** (`border-l-4`):
+   - Verde enquanto a conta está aberta (`border-l-green-500`)
+   - Cinzenta quando fechada (`border-l-border/50`)
+   - Isto permite distinguir o estado mesmo sem ler a faixa do topo
+     (útil para o admin fazer scan visual rápido da lista).
+
+3. **Opacidade reduzida** para pedidos fechados (`opacity-70`) —
+   visualmente "arquivados" mas ainda legíveis.
+
+4. **Removido** o badge antigo discreto "aberta/fechada" que estava
+   no cabeçalho (era pouco visível). A nova faixa no topo é muito
+   mais clara.
+
+5. **Ícone `CheckCircle2`** adicionado ao texto "Entregue" no
+   rodapé (quando o pedido está no estado final) para reforçar
+   visualmente.
+
+**Resultado visual**
+
+```
+┌──────────────────────────────────────────────┐
+│ ● MESA ATIVA · ABERTA         🧾 aB3xY9     │  ← verde claro (open)
+├──────────────────────────────────────────────┤
+│ Mesa 5  [Recebido]  +1                       │
+│                                    21:34     │
+├──────────────────────────────────────────────┤
+│ 2× Caipirinha                       €15.00   │
+│ 1× Heineken                          €3.00   │
+├──────────────────────────────────────────────┤
+│ €18.00              [Marcar Pronto →]        │
+└──────────────────────────────────────────────┘
+   ↑ borda esquerda verde (4px)
+
+┌──────────────────────────────────────────────┐
+│ ✓ CONTA PAGA · FECHADA          🧾 xY9zZ1   │  ← cinzento (closed)
+├──────────────────────────────────────────────┤
+│ Mesa 3  [Entregue]                            │
+│                                    19:12     │
+├──────────────────────────────────────────────┤
+│ 1× Mojito                            €10.00  │
+├──────────────────────────────────────────────┤
+│ €10.00                          ✓ Entregue   │
+└──────────────────────────────────────────────┘
+   ↑ borda esquerda cinzenta + opacity-70
+```
+
+**Estado final**
+
+- Build OK.
+- Cada cartão de pedido no Admin tem agora um indicador visual
+  claro do estado da conta (aberta/fechada) no topo + borda
+  esquerda colorida.
+- Pedidos fechados aparecem com opacity-70 para "arquivar"
+  visualmente.
+- Design integrado com o tema dark + B'Live Pink existente.

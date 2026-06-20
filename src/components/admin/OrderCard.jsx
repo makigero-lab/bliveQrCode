@@ -1,5 +1,11 @@
 import { motion } from "framer-motion";
-import { ChevronRight, MessageSquare } from "lucide-react";
+import {
+  ChevronRight,
+  MessageSquare,
+  CircleDot,
+  CheckCircle2,
+  Receipt,
+} from "lucide-react";
 import { listProducts, updateOrder, updateProduct } from "@/lib/db";
 
 // Novo fluxo: recebido → pronto → entregue
@@ -41,12 +47,40 @@ const nextLabel = {
   em_preparacao: "Marcar Pronto",
 };
 
+// Configuração visual do indicador de tab_status (conta aberta vs fechada)
+// Este é o destaque principal do cartão — aparece numa faixa no topo.
+const tabStatusMeta = {
+  open: {
+    label: "Mesa Ativa · Aberta",
+    // Verde claro de fundo + verde escuro de texto (alto contraste,
+    // legível em fundo escuro). Pode ler-se como "conta em curso".
+    className: "bg-green-500/15 text-green-300 border-green-500/30",
+    icon: CircleDot,
+    // Borda esquerda do cartão fica verde enquanto a conta está aberta
+    cardBorder: "border-l-green-500",
+  },
+  closed: {
+    label: "Conta Paga · Fechada",
+    // Cinzento/muted — sem destaque porque já foi resolvida.
+    className: "bg-secondary text-muted-foreground border-border",
+    icon: CheckCircle2,
+    cardBorder: "border-l-border/50",
+  },
+};
+
 // Normaliza status legacy para o novo fluxo (para display)
 function normalizeStatus(s) {
   if (!s) return "recebido";
   if (["pendente", "confirmado", "em_preparacao"].includes(s)) return "recebido";
   if (s === "pago") return "entregue";
   return s;
+}
+
+// Normaliza tab_status: pedidos sem o campo são tratados como "open"
+// (default aplicado em createOrder).
+function normalizeTabStatus(s) {
+  if (!s) return "open";
+  return s === "closed" ? "closed" : "open";
 }
 
 export default function OrderCard({ order, onUpdate }) {
@@ -80,15 +114,38 @@ export default function OrderCard({ order, onUpdate }) {
   const displayStatus = normalizeStatus(order.status);
   const canAdvance = Boolean(nextStatus[displayStatus]);
 
+  // Indicador de conta (tab_status)
+  const tabStatus = normalizeTabStatus(order.tab_status);
+  const tabMeta = tabStatusMeta[tabStatus];
+  const TabIcon = tabMeta.icon;
+  const isClosed = tabStatus === "closed";
+
   return (
     <motion.div
       layout
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`bg-card border border-border/50 rounded-2xl overflow-hidden ${
-        displayStatus === "entregue" ? "opacity-60" : ""
+      className={`bg-card border border-border/50 border-l-4 ${tabMeta.cardBorder} rounded-2xl overflow-hidden ${
+        isClosed ? "opacity-70" : ""
       }`}
     >
+      {/* === Faixa de destaque: tab_status === */}
+      {/* Aparece no topo do cartão, full-width, para distinguir contas
+          abertas (verde) de fechadas (cinzento). */}
+      <div
+        className={`flex items-center justify-between px-4 py-1.5 border-b border-border/40 ${tabMeta.className}`}
+      >
+        <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider">
+          <TabIcon className="w-3 h-3" />
+          {tabMeta.label}
+        </span>
+        <span className="flex items-center gap-1 text-[10px] opacity-70">
+          <Receipt className="w-2.5 h-2.5" />
+          {order.id?.slice(0, 6)}
+        </span>
+      </div>
+
+      {/* === Cabeçalho: mesa + estado do pedido + hora === */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
         <div className="flex items-center gap-2">
           <p className="font-playfair font-bold text-base">
@@ -110,18 +167,6 @@ export default function OrderCard({ order, onUpdate }) {
               +{order.merge_count}
             </span>
           )}
-          {/* Badge tab_status (para o Admin distinguir open/closed) */}
-          {order.tab_status && (
-            <span
-              className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${
-                order.tab_status === "closed"
-                  ? "bg-secondary text-muted-foreground"
-                  : "bg-green-500/15 text-green-400"
-              }`}
-            >
-              {order.tab_status === "closed" ? "fechada" : "aberta"}
-            </span>
-          )}
         </div>
         <p className="text-muted-foreground text-xs">
           {order.created_date
@@ -133,6 +178,7 @@ export default function OrderCard({ order, onUpdate }) {
         </p>
       </div>
 
+      {/* === Itens === */}
       <div className="px-4 py-3 space-y-1.5">
         {order.items?.map((item, i) => (
           <div key={i} className="flex justify-between text-sm">
@@ -147,6 +193,7 @@ export default function OrderCard({ order, onUpdate }) {
         ))}
       </div>
 
+      {/* === Notas === */}
       {order.notes && (
         <div className="mx-4 mb-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-3 py-2 flex items-start gap-2">
           <MessageSquare className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0 mt-0.5" />
@@ -154,6 +201,7 @@ export default function OrderCard({ order, onUpdate }) {
         </div>
       )}
 
+      {/* === Rodapé: total + ação === */}
       <div className="flex items-center justify-between px-4 py-3 bg-secondary/30 border-t border-border/30">
         <p className="font-bold text-primary text-base">
           €{order.total_amount?.toFixed(2)}
@@ -167,7 +215,10 @@ export default function OrderCard({ order, onUpdate }) {
             <ChevronRight className="w-4 h-4" />
           </button>
         ) : (
-          <span className="text-green-400 text-sm font-semibold">✓ Entregue</span>
+          <span className="text-green-400 text-sm font-semibold flex items-center gap-1">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            Entregue
+          </span>
         )}
       </div>
     </motion.div>
