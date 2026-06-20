@@ -1,0 +1,10 @@
+{
+  "name": "bliveQrCode — Menu Digital",
+  "short_name": "bliveQrCode",
+  "description": "Menu digital com QR code para bares e restaurantes",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#E91E8C",
+  "icons": []
+}
