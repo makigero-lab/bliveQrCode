@@ -29,6 +29,13 @@ function normalizeTabStatus(s) {
   return s === "closed" ? "closed" : "open";
 }
 
+function normalizeStatus(s) {
+  if (!s) return "recebido";
+  if (["pendente", "confirmado", "em_preparacao"].includes(s)) return "recebido";
+  if (s === "pago") return "entregue";
+  return s;
+}
+
 export default function OrderCard({ order }) {
   const { user } = useAuth();
   const tabStatus = normalizeTabStatus(order.tab_status);
@@ -36,9 +43,16 @@ export default function OrderCard({ order }) {
   const TabIcon = tabMeta.icon;
   const isClosed = tabStatus === "closed";
   const isOpen = !isClosed;
+  const isEntregue = normalizeStatus(order.status) === "entregue";
+  const canCancel = isOpen && !isEntregue;
 
   const handleCancelItem = async (e, itemIndex, item) => {
     e.stopPropagation();
+    const currentStatus = normalizeStatus(order.status);
+    if (currentStatus === "entregue") {
+      window.alert("Não é possível anular itens de um pedido já entregue.");
+      return;
+    }
     const confirm = window.confirm(
       `Anular este item?\n\n` +
         `${item.quantity}× ${item.product_name} · €${Number(item.total).toFixed(2)}\n\n` +
@@ -90,6 +104,15 @@ export default function OrderCard({ order }) {
               +{order.merge_count}
             </span>
           )}
+          {/* Badge de origem: POS (staff) vs Menu (cliente) */}
+          {order.source === "pos" && order.created_by_email && (
+            <span
+              className="text-[10px] bg-blue-500/15 text-blue-400 px-1.5 py-0.5 rounded-md font-medium truncate max-w-[120px]"
+              title={`Pedido criado por ${order.created_by_email}`}
+            >
+              POS: {order.created_by_email}
+            </span>
+          )}
         </div>
         <p className="text-muted-foreground text-xs">
           {order.created_date
@@ -113,7 +136,7 @@ export default function OrderCard({ order }) {
               <span className="text-muted-foreground font-medium">
                 €{item.total?.toFixed(2)}
               </span>
-              {isOpen && (
+              {canCancel && (
                 <button
                   onClick={(e) => handleCancelItem(e, i, item)}
                   title={`Anular ${item.product_name}`}

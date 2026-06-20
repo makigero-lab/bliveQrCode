@@ -22,6 +22,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { listAvailableProducts, createOrder } from "@/lib/db";
+import { useAuth } from "@/lib/AuthContext";
 
 const CATEGORIES = [
   { id: "todos", label: "Todos", emoji: "✨" },
@@ -33,6 +34,7 @@ const CATEGORIES = [
 ];
 
 export default function POSModal({ tableNumber, onClose, onSubmitted }) {
+  const { user } = useAuth();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -117,6 +119,9 @@ export default function POSModal({ tableNumber, onClose, onSubmitted }) {
         tab_status: "open",
         status: "recebido",
         notes: null,
+        source: "pos",
+        created_by_uid: user?.uid || null,
+        created_by_email: user?.email || null,
       });
 
 

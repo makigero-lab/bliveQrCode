@@ -205,6 +205,13 @@ export async function createOrder(data) {
     status: data.status || "recebido",
     // Campos opcionais
     notes: data.notes || null,
+    // Auditoria: quem criou o pedido. Se vier do /menu (cliente),
+    // estes campos ficam null. Se vier do POS (staff), ficam
+    // preenchidos com o uid e email do staff.
+    created_by_uid: data.created_by_uid || null,
+    created_by_email: data.created_by_email || null,
+    // source: "menu" (cliente via QR) ou "pos" (staff via POS Modal)
+    source: data.source || "menu",
     // Timestamps
     created_date: isoNow,
     updated_date: isoNow,
@@ -380,6 +387,13 @@ export async function cancelOrderItem(orderId, itemIndex, staffUser) {
   const order = normalizeTimestamp({ id: snap.id, ...snap.data() });
   const items = Array.isArray(order.items) ? order.items : [];
   const canceledItems = Array.isArray(order.canceled_items) ? order.canceled_items : [];
+
+  // BLOQUEIA cancelamento se o pedido já foi entregue.
+  // Não faz sentido anular itens que já estão na mesa do cliente.
+  const currentStatus = order.status || "recebido";
+  if (currentStatus === "entregue") {
+    throw new Error("Não é possível anular itens de um pedido já entregue.");
+  }
 
   if (itemIndex < 0 || itemIndex >= items.length) {
     throw new Error("Índice de item inválido.");

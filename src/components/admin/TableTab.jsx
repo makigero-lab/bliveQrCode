@@ -147,6 +147,14 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
 
   const handleCancelItem = async (e, order, itemIndex, item) => {
     e.stopPropagation();
+
+    // Bloqueia cancelamento se o pedido já foi entregue
+    const currentStatus = normalizeStatus(order.status);
+    if (currentStatus === "entregue") {
+      window.alert("Não é possível anular itens de um pedido já entregue.");
+      return;
+    }
+
     const confirm = window.confirm(
       `Anular este item?\n\n` +
         `${item.quantity}× ${item.product_name} · €${Number(item.total).toFixed(2)}\n\n` +
@@ -296,6 +304,12 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
                           +{order.merge_count}
                         </span>
                       )}
+                      {/* Badge de origem: POS (staff) vs Menu (cliente) */}
+                      {order.source === "pos" && order.created_by_email && (
+                        <span className="bg-blue-500/15 text-blue-400 px-1.5 py-0.5 rounded-md font-medium ml-1 truncate" title={`Pedido criado por ${order.created_by_email}`}>
+                          POS: {order.created_by_email}
+                        </span>
+                      )}
                     </span>
                   </div>
 
@@ -338,19 +352,21 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
                             <span className="text-muted-foreground font-medium">
                               €{Number(item.total).toFixed(2)}
                             </span>
-                            {/* Botão Anular Item Individual */}
-                            <button
-                              onClick={(e) => handleCancelItem(e, order, i, item)}
-                              disabled={isCanceling}
-                              title={`Anular ${item.product_name}`}
-                              className="w-6 h-6 rounded-md bg-red-500/10 flex items-center justify-center hover:bg-red-500/25 active:scale-90 transition-all disabled:opacity-30"
-                            >
-                              {isCanceling ? (
-                                <span className="w-3 h-3 border border-red-400/40 border-t-red-400 rounded-full animate-spin" />
-                              ) : (
-                                <XCircle className="w-3.5 h-3.5 text-red-400" />
-                              )}
-                            </button>
+                            {/* Botão Anular Item Individual — escondido se pedido entregue */}
+                            {status !== "entregue" && (
+                              <button
+                                onClick={(e) => handleCancelItem(e, order, i, item)}
+                                disabled={isCanceling}
+                                title={`Anular ${item.product_name}`}
+                                className="w-6 h-6 rounded-md bg-red-500/10 flex items-center justify-center hover:bg-red-500/25 active:scale-90 transition-all disabled:opacity-30"
+                              >
+                                {isCanceling ? (
+                                  <span className="w-3 h-3 border border-red-400/40 border-t-red-400 rounded-full animate-spin" />
+                                ) : (
+                                  <XCircle className="w-3.5 h-3.5 text-red-400" />
+                                )}
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
