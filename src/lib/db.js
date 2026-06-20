@@ -159,14 +159,19 @@ export async function createOrder(data) {
   // por retrocompatibilidade com Admin.jsx / OrderCard.jsx / pedidos antigos.
   const tableStr = String(data.table || data.table_number || "1");
 
-  // === Lógica de merge ===
-  // Modelo Open Tabs: se a mesa ainda tem conta aberta (tab_status="open"),
-  // JUNTAMOS os novos itens ao pedido existente em vez de criar novo doc.
-  // Isto evita ter 10 pedidos separados da mesma mesa só porque o cliente
-  // adicionou items em cliques separados ao longo da noite.
+  // === Regra do Novo Talão (Ticket) vs Merge ===
+  //
+  // Quando um cliente (ou staff) submete um pedido para uma mesa:
+  //
+  //   1. Procura o pedido MAIS RECENTE dessa mesa com tab_status="open".
+  //   2. Se esse pedido tem status="recebido" → MERGE (junta os novos
+  //      itens ao documento existente, pois o barman ainda não preparou).
+  //   3. Se esse pedido tem status="pronto" ou "entregue" → NÃO faz merge.
+  //      Cria um NOVO documento com tab_status="open" + status="recebido"
+  //      (novo talão para o barman preparar, mas mesma conta de faturação).
   //
   // Quando o staff fecha a conta (tab_status → "closed"), a mesa fica
-  // "limpa" e o próximo pedido cria um novo documento.
+  // "limpa" e o próximo pedido cria obrigatoriamente um novo documento.
   const mergeResult = await tryMergeWithOpenOrder(tableStr, data.items, data.notes);
 
   if (mergeResult.merged) {
@@ -207,14 +212,20 @@ export async function createOrder(data) {
 }
 
 /**
- * Procura um pedido aberto (tab_status=open) e "recebido" (ainda não
- * foi tratado pelo barman) da mesa indicada. Se existir, faz merge
- * dos novos itens.
+ * Procura o pedido MAIS RECENTE aberto (tab_status=open) e "recebido"
+ * (ainda não foi tratado pelo barman) da mesa indicada. Se existir,
+ * faz merge dos novos itens a esse documento.
  *
- * Só faz merge se o pedido anterior ainda está "recebido" — se já
- * está "pronto" ou "entregue", cria um novo documento (o cliente
- * está a fazer um pedido extra depois da primeira ronda já ter sido
- * preparada).
+ * Regra do Novo Talão vs Merge:
+ *   - Se o último pedido da mesa ainda está "recebido" → MERGE
+ *     (o barman ainda não começou a preparar, faz sentido juntar).
+ *   - Se o último pedido já está "pronto" ou "entregue" → NÃO faz
+ *     merge. O createOrder cria um NOVO documento com status="recebido"
+ *     (novo talão para o barman preparar).
+ *
+ * Usa orderBy("created_date", "desc") + limit(1) para garantir que
+ * faz merge apenas com o pedido MAIS RECENTE (não com um antigo
+ * que ainda esteja "recebido" por engano).
  *
  * @param {string} tableStr
  * @param {Array} newItems
@@ -223,12 +234,14 @@ export async function createOrder(data) {
  */
 async function tryMergeWithOpenOrder(tableStr, newItems, newNotes) {
   try {
-    // Procura pedidos abertos e "recebido" da mesa
+    // Procura o pedido MAIS RECENTE aberto e "recebido" da mesa
     const q = query(
       collection(db, "orders"),
       where("tab_status", "==", "open"),
       where("table", "==", tableStr),
-      where("status", "==", "recebido")
+      where("status", "==", "recebido"),
+      orderBy("created_date", "desc"),
+      limit(1)
     );
     const snap = await getDocs(q);
 
@@ -238,14 +251,16 @@ async function tryMergeWithOpenOrder(tableStr, newItems, newNotes) {
         collection(db, "orders"),
         where("tab_status", "==", "open"),
         where("table_number", "==", tableStr),
-        where("status", "==", "recebido")
+        where("status", "==", "recebido"),
+        orderBy("created_date", "desc"),
+        limit(1)
       );
       const snap2 = await getDocs(q2);
       if (snap2.empty) return { merged: false };
       return _doMerge(snap2.docs[0], newItems, newNotes);
     }
 
-    // Faz merge com o primeiro pedido "recebido" encontrado
+    // Faz merge com o pedido "recebido" mais recente
     return _doMerge(snap.docs[0], newItems, newNotes);
   } catch (err) {
     return { merged: false };
