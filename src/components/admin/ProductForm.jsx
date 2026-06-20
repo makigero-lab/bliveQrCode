@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X } from "lucide-react";
-import { createProduct, updateProduct } from "@/lib/db";
+import { createProduct, updateProduct, listProducts } from "@/lib/db";
 
 const categories = ["bebidas", "cocktails", "comida", "sobremesas", "shisha"];
 
@@ -10,6 +10,21 @@ export default function ProductForm({ product, onClose, onSaved }) {
     subcategory: "", image_url: "", available: true, stock_enabled: false, stock: 0
   });
   const [loading, setLoading] = useState(false);
+  const [existingSubcategories, setExistingSubcategories] = useState([]);
+
+  // Carrega subcategorias existentes para sugestão no datalist
+  useEffect(() => {
+    listProducts()
+      .then((products) => {
+        const subs = [...new Set(
+          products
+            .map((p) => p.subcategory)
+            .filter(Boolean)
+        )].sort();
+        setExistingSubcategories(subs);
+      })
+      .catch(() => {});
+  }, []);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -75,11 +90,17 @@ export default function ProductForm({ product, onClose, onSaved }) {
           <label className="text-xs text-muted-foreground mb-1 block">Subcategoria (opcional)</label>
           <input
             type="text"
+            list="subcategory-suggestions"
             value={form.subcategory || ""}
             onChange={(e) => set("subcategory", e.target.value)}
             placeholder="Ex: Cervejas, Águas, Shots..."
             className="w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
           />
+          <datalist id="subcategory-suggestions">
+            {existingSubcategories.map((sub) => (
+              <option key={sub} value={sub} />
+            ))}
+          </datalist>
         </div>
 
         <label className="flex items-center gap-3 cursor-pointer">
