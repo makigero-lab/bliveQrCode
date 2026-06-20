@@ -1752,3 +1752,41 @@ destaque no topo de cada cartão:
 - Pedidos fechados aparecem com opacity-70 para "arquivar"
   visualmente.
 - Design integrado com o tema dark + B'Live Pink existente.
+
+---
+
+## 2026-06-20 — Timestamp de fecho legível no Histórico
+
+**Tarefa**
+
+Adicionar timestamp visível no rodapé do cartão de mesa no
+Histórico do `/staff`, ao lado da informação de quem fechou a conta.
+Formato legível: `HH:MM` se for hoje, `DD/MM - HH:MM` se for de
+outro dia.
+
+Rejeitadas: múltiplos alertas sonoros e estados intermédios de
+preparação — em bar noturno, UI deve ser direta, sem fadiga de
+notificações. Mantém-se modelo de Open Tabs.
+
+**Alteração**
+
+**`src/pages/Staff.jsx → ClosedSessionCard`** — bloco de auditoria
+no rodapé reescrito:
+
+- Lê `closed_at` e `closed_by_email` do primeiro pedido da sessão
+  (ambos gravados no batch update do `closeTableOrders`).
+- Formata o timestamp:
+  - **Mesmo dia** → `HH:MM` (ex: `23:45`)
+  - **Outro dia** → `DD/MM - HH:MM` (ex: `15/06 - 23:45`)
+- Linha resultante:
+  - Com staff: `Fechado por: joao@bar.com às 23:45`
+  - Sem staff (legacy): `Fechada às 23:45`
+- Mantém o estilo visual discreto: texto 10px, cor muted, opacidade
+  60%, `flex-wrap` para não estourar em ecrãs estreitos.
+
+**Estado final**
+
+- Build OK.
+- Histórico do `/staff` agora mostra timestamp legível de fecho ao
+  lado do email do staff. Fácil de auditar quem fechou cada conta
+  e quando, sem precisar de abrir DevTools ou Firebase Console.

@@ -723,19 +723,61 @@ function ClosedSessionCard({ table, closedAt, orders, total }) {
             {formatTime(orders[0]?.created_date)}
           </p>
 
-          {/* Auditoria: quem fechou a conta */}
+          {/* Auditoria: quem fechou a conta + quando (timestamp legível) */}
           {(() => {
             // Todos os pedidos da sessão têm o mesmo closed_by_email
-            // (gravado no batch update). Lemos do primeiro.
-            const closedByEmail =
-              orders[0]?.closed_by_email || orders[0]?.closed_by_uid;
-            if (!closedByEmail) return null;
+            // e closed_at (gravados no batch update). Lemos do primeiro.
+            const first = orders[0] || {};
+            const closedByEmail = first.closed_by_email || first.closed_by_uid;
+            if (!closedByEmail && !closedAt) return null;
+
+            // Formata o timestamp de fecho:
+            //   - Se for hoje → só HH:MM  (ex: "23:45")
+            //   - Se for outro dia → DD/MM - HH:MM  (ex: "15/06 - 23:45")
+            let whenStr = "";
+            if (closedAt) {
+              const d = new Date(closedAt);
+              const now = new Date();
+              const isSameDay =
+                d.getDate() === now.getDate() &&
+                d.getMonth() === now.getMonth() &&
+                d.getFullYear() === now.getFullYear();
+              const hh = String(d.getHours()).padStart(2, "0");
+              const mm = String(d.getMinutes()).padStart(2, "0");
+              if (isSameDay) {
+                whenStr = `${hh}:${mm}`;
+              } else {
+                const dd = String(d.getDate()).padStart(2, "0");
+                const MM = String(d.getMonth() + 1).padStart(2, "0");
+                whenStr = `${dd}/${MM} - ${hh}:${mm}`;
+              }
+            }
+
             return (
-              <p className="text-[10px] text-muted-foreground/60 mt-1 flex items-center gap-1">
-                <span className="opacity-60">Fechado por:</span>
-                <span className="text-muted-foreground font-medium">
-                  {closedByEmail}
-                </span>
+              <p className="text-[10px] text-muted-foreground/60 mt-1 flex items-center gap-1 flex-wrap">
+                {closedByEmail ? (
+                  <>
+                    <span className="opacity-60">Fechado por:</span>
+                    <span className="text-muted-foreground font-medium">
+                      {closedByEmail}
+                    </span>
+                    {whenStr && (
+                      <>
+                        <span className="opacity-60">às</span>
+                        <span className="text-muted-foreground font-medium">
+                          {whenStr}
+                        </span>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <span className="opacity-60">Fechada às</span>
+                    <span className="text-muted-foreground font-medium">
+                      {whenStr}
+                    </span>
+                  </>
+                )}
               </p>
             );
           })()}
