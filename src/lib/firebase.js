@@ -23,7 +23,11 @@ import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
-const firebaseConfig = {
+// Exportado para que o UsersPanel possa inicializar uma app
+// secundária ( SecondaryApp ) ao criar novos utilizadores —
+// contorna o problema do createUserWithEmailAndPassword afetar
+// a sessão atual do admin.
+export const firebaseConfig = {
   apiKey: "AIzaSyBMqbxgLDtmi1AhF0DC41a7UO39vczy0cs",
   authDomain: "autocell-535c2.firebaseapp.com",
   projectId: "autocell-535c2",

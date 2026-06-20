@@ -1433,3 +1433,115 @@ engano, sem destruir o fecho de caixa do turno.
   acentos PT corretos (BOM UTF-8).
 - **Disputa de contas**: se um cliente questionar uma conta, o
   staff pode ver quem a fechou e quando.
+
+---
+
+## 2026-06-20 — Secondary App + Aviso eliminação + Filtros tab_status no Admin
+
+**Tarefas executadas**
+
+1. **Contornar o logout do admin** na criação de utilizadores,
+   usando uma **Firebase Secondary App** em vez da instância
+   principal do Auth.
+2. **Aviso sobre eliminação definitiva** — tooltip no botão delete
+   a indicar que a conta Auth tem de ser apagada manualmente em
+   Firebase Console.
+3. **Filtros de `tab_status` no painel Admin** — separador Pedidos
+   distingue Mesas Abertas / Contas Fechadas / Todos. Gráficos de
+   Analytics e Vendas calculam faturação apenas com base em
+   `tab_status === "closed"`.
+
+### 1. Secondary App (sem Cloud Functions, plano Spark)
+
+**`src/lib/firebase.js`** — exportado `firebaseConfig` para que o
+UsersPanel possa reutilizá-lo na criação da app secundária.
+
+**`src/components/admin/UsersPanel.jsx → handleCreate`** — reescrito:
+
+- Em vez de `createUserWithEmailAndPassword(auth, ...)`, cria uma
+  app Firebase secundária com nome único:
+  ```js
+  const secondaryApp = initializeApp(firebaseConfig, `SecondaryApp-${Date.now()}`);
+  const secondaryAuth = getAuth(secondaryApp);
+  const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+  ```
+- Cria o perfil em `users/{uid}` usando a instância principal do
+  Firestore (`setUserProfile`).
+- Faz `signOut(secondaryAuth)` e `deleteApp(secondaryApp)` para
+  libertar recursos.
+- **A sessão do admin na app principal NÃO é afetada** — o admin
+  continua logado e pode criar mais utilizadores sem re-login.
+- Aviso antigo (amarelo, "a tua sessão será terminada") foi
+  substituído por um aviso verde: "Sessão segura: a criação usa
+  uma app Firebase secundária, pelo que a tua sessão de admin
+  **não será terminada**".
+- `try/finally` garante que a app secundária é sempre apagada
+  mesmo em caso de erro.
+
+### 2. Aviso sobre eliminação definitiva
+
+**`UsersPanel.jsx`** — adicionado:
+- Tooltip (hover) no botão de delete de cada utilizador:
+  > **Nota:** a conta de acesso tem de ser removida permanentemente
+  > em [Firebase Console → Authentication].
+- Diálogo de confirmação de delete agora menciona explicitamente:
+  > ⚠️ Para apagar DEFINITIVAMENTE a conta de acesso, tens de ir a:
+  > Firebase Console → Authentication → Users → Delete.
+- Info box no fundo do painel explica as limitações do plano Spark
+  (sem Cloud Functions, não é possível apagar Auth via SDK sem
+  estar autenticado como essa conta).
+
+### 3. Filtros de `tab_status` no Admin
+
+**`src/pages/Admin.jsx`** — separador Pedidos reescrito:
+- Novo estado `ordersFilter` com default `"open"`.
+- Lógica dividida conforme o novo modelo de Contas por Mesa:
+  - `openOrders`: pedidos com `!tab_status || tab_status === "open"`
+    (default legacy tratado como open).
+  - `closedOrders`: pedidos com `tab_status === "closed"`.
+  - `filteredOrders`: lista a mostrar conforme filtro ativo.
+- Barra de filtros visível acima da lista com 3 botões:
+  - **Mesas Abertas** (badge com contagem)
+  - **Contas Fechadas** (badge com contagem)
+  - **Todos** (badge com contagem)
+- Header muda dinamicamente: "Mesas Abertas (5)" / "Contas
+  Fechadas (12)" / "Todos os Pedidos (17)".
+- Estado vazio personalizado conforme o filtro.
+- Removida a secção antiga "Concluídos hoje" (era baseada em
+  `status === "pago"` legacy).
+
+### 4. Gráficos de Analytics/Vendas alinhados
+
+**`src/components/admin/SalesDashboard.jsx`** e
+**`src/components/admin/AnalyticsPanel.jsx`**:
+- `paidOrders` agora filtra estritamente por `tab_status === "closed"`
+  (sem o fallback `status === "pago"` que ainda permitia pedidos
+  legacy contarem para faturação).
+- Comentário atualizado: "Faturação = contas efetivamente fechadas
+  pelo staff. Pedidos abertos (tab_status=open) NÃO contam para
+  faturação porque ainda podem ser alterados/cancelados pelo
+  cliente."
+- Gráficos diários, KPIs (Faturado/Pedidos/Ticket Médio), top
+  produtos e volume por hora todos calculam apenas sobre contas
+  fechadas.
+
+**Estado final**
+
+- Build OK.
+- Criar utilizadores no Admin já NÃO termina a sessão do admin
+  (Secondary App). Funciona no plano Spark sem Cloud Functions.
+- Eliminar utilizadores mostra tooltip + diálogo com instrução
+  clara sobre apagar manualmente a conta Auth em Firebase Console.
+- Separador Pedidos do Admin tem 3 filtros visuais: Mesas Abertas,
+  Contas Fechadas, Todos.
+- Faturação dos gráficos e KPIs é estritamente sobre contas
+  fechadas (`tab_status === "closed"`).
+
+**Limitações remanescentes**
+
+- Sem Cloud Functions, apagar conta Auth tem de ser manual. Se
+  no futuro for ativado o plano Blaze, pode ser adicionada uma
+  Cloud Function `deleteUser` chamada pelo Admin.
+- A app secundária é apagada em cada chamada — não há pooling.
+  Isto é aceitável porque a criação de utilizadores é uma operação
+  rara (admin cria 1-5 contas no total).

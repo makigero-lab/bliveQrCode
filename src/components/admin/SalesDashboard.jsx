@@ -22,10 +22,11 @@ export default function SalesDashboard({ orders }) {
   const [endDate, setEndDate] = useState("");
   const [exporting, setExporting] = useState(false);
 
-  // "Pago" = conta fechada (tab_status="closed"). O `status==="pago"`
-  // é legacy; usamos o novo modelo de Open Tabs.
+  // Faturação = contas efetivamente fechadas pelo staff (tab_status="closed").
+  // Pedidos abertos (tab_status="open") NÃO contam para faturação porque
+  // ainda podem ser alterados/cancelados pelo cliente.
   const paidOrders = useMemo(
-    () => orders.filter((o) => o.tab_status === "closed" || o.status === "pago"),
+    () => orders.filter((o) => o.tab_status === "closed"),
     [orders]
   );
 

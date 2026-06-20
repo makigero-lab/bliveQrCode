@@ -49,6 +49,8 @@ export default function Admin() {
   const [editProduct, setEditProduct] = useState(null);
   const [showProductForm, setShowProductForm] = useState(false);
   const [newOrderAlert, setNewOrderAlert] = useState(false);
+  // Filtro do separador Pedidos: "open" (mesas ativas) | "closed" (histórico) | "all"
+  const [ordersFilter, setOrdersFilter] = useState("open");
   const { settings } = useBarSettings();
   const { user, logout } = useAuth();
   const ordersRef = useRef([]);
@@ -118,8 +120,31 @@ export default function Admin() {
     return () => unsubscribe();
   }, [loadOrders, loadProducts]);
 
-  const activeOrders = orders.filter((o) => o.status !== "pago");
-  const doneOrders = orders.filter((o) => o.status === "pago");
+  // === Filtros de pedidos por tab_status (sistema de Contas por Mesa) ===
+  // - "open"   → mesas ativas (contas abertas, ainda não pagas/fechadas)
+  // - "closed" → histórico (contas fechadas pelo staff)
+  // - "all"    → todos os pedidos (auditoria)
+  //
+  // Compatibilidade: pedidos antigos sem `tab_status` são tratados como
+  // "open" (default aplicado no createOrder).
+  const openOrders = orders.filter(
+    (o) => !o.tab_status || o.tab_status === "open"
+  );
+  const closedOrders = orders.filter((o) => o.tab_status === "closed");
+
+  // Lista a mostrar conforme o filtro ativo (default: "open")
+  const filteredOrders =
+    ordersFilter === "closed"
+      ? closedOrders
+      : ordersFilter === "all"
+      ? orders
+      : openOrders;
+
+  // Mantemos activeOrders/doneOrders por compatibilidade com código
+  // mais antigo que ainda os use, mas os gráficos e a UI agora usam
+  // tab_status diretamente.
+  const activeOrders = openOrders;
+  const doneOrders = closedOrders;
 
   const handleDeleteProduct = async (id) => {
     try {
@@ -198,12 +223,16 @@ export default function Admin() {
       </div>
 
       <div className="p-4 max-w-2xl mx-auto">
-        {/* ORDERS TAB */}
+        {/* ORDERS TAB — filtros por tab_status (Contas por Mesa) */}
         {tab === "orders" && (
           <div className="space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="font-semibold text-lg">
-                Pedidos ativos <span className="text-primary">({activeOrders.length})</span>
+                {ordersFilter === "open" && `Mesas Abertas`}
+                {ordersFilter === "closed" && `Contas Fechadas`}
+                {ordersFilter === "all" && `Todos os Pedidos`}
+                {" "}
+                <span className="text-primary">({filteredOrders.length})</span>
               </h2>
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1.5 text-xs text-green-400 font-medium">
@@ -217,6 +246,36 @@ export default function Admin() {
                   <RefreshCw className="w-4 h-4 text-muted-foreground" />
                 </button>
               </div>
+            </div>
+
+            {/* Filtros: Mesas Abertas / Contas Fechadas / Todos */}
+            <div className="flex items-center gap-1 bg-card border border-border/50 rounded-2xl p-1">
+              {[
+                { value: "open", label: "Mesas Abertas", count: openOrders.length, color: "bg-primary" },
+                { value: "closed", label: "Contas Fechadas", count: closedOrders.length, color: "bg-green-500" },
+                { value: "all", label: "Todos", count: orders.length, color: "bg-secondary" },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setOrdersFilter(opt.value)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 text-xs font-medium px-2 py-2 rounded-xl transition-colors ${
+                    ordersFilter === opt.value
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground hover:bg-secondary"
+                  }`}
+                >
+                  {opt.label}
+                  <span
+                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                      ordersFilter === opt.value
+                        ? "bg-primary-foreground/20 text-primary-foreground"
+                        : "bg-secondary text-muted-foreground"
+                    }`}
+                  >
+                    {opt.count}
+                  </span>
+                </button>
+              ))}
             </div>
 
             {newOrderAlert && (
@@ -236,27 +295,25 @@ export default function Admin() {
                   <div key={i} className="h-36 bg-card rounded-2xl animate-pulse border border-border/30" />
                 ))}
               </div>
-            ) : activeOrders.length === 0 ? (
+            ) : filteredOrders.length === 0 ? (
               <div className="text-center py-16 text-muted-foreground">
                 <ClipboardList className="w-12 h-12 mx-auto mb-3 opacity-30" />
-                <p>Sem pedidos ativos</p>
+                <p>
+                  {ordersFilter === "open" && "Sem mesas abertas"}
+                  {ordersFilter === "closed" && "Sem contas fechadas"}
+                  {ordersFilter === "all" && "Sem pedidos"}
+                </p>
+                <p className="text-xs mt-1 opacity-70">
+                  {ordersFilter === "open" && "Os novos pedidos do /menu aparecem aqui automaticamente."}
+                  {ordersFilter === "closed" && "Quando o staff fecha uma mesa no /staff, a conta aparece aqui."}
+                  {ordersFilter === "all" && "Pedidos aparecerão aqui assim que forem criados no /menu."}
+                </p>
               </div>
             ) : (
               <div className="space-y-3">
-                {activeOrders.map((o) => (
+                {filteredOrders.map((o) => (
                   <OrderCard key={o.id} order={o} onUpdate={loadOrders} />
                 ))}
-              </div>
-            )}
-
-            {doneOrders.length > 0 && (
-              <div className="mt-6">
-                <h2 className="font-semibold text-base text-muted-foreground mb-3">Concluídos hoje ({doneOrders.length})</h2>
-                <div className="space-y-3 opacity-60">
-                  {doneOrders.slice(0, 5).map((o) => (
-                    <OrderCard key={o.id} order={o} onUpdate={loadOrders} />
-                  ))}
-                </div>
               </div>
             )}
 
