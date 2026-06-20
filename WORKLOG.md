@@ -1790,3 +1790,82 @@ no rodapé reescrito:
 - Histórico do `/staff` agora mostra timestamp legível de fecho ao
   lado do email do staff. Fácil de auditar quem fechou cada conta
   e quando, sem precisar de abrir DevTools ou Firebase Console.
+
+---
+
+## 2026-06-20 — Paginação no Histórico + Limpeza de estados intermédios
+
+**Tarefas**
+
+1. Paginação no histórico de contas fechadas (limit + startAfter).
+2. Remoção completa de estados intermédios (recebido/pronto/entregue)
+   — modelo Open Tabs puro: só `tab_status: open|closed`.
+3. Rejeitados: jobs de limpeza automática (dados precisos para
+   contabilidade).
+
+### 1. Paginação no Histórico
+
+**`src/lib/db.js`** — nova função `loadClosedOrdersPage(cursor, pageSize)`:
+- Usa `getDocs` + `limit(20)` + `startAfter(cursor)` em vez de
+  `onSnapshot` que carregava tudo.
+- Ordena por `closed_at` desc (fallback: `created_date`).
+- Retorna `{items, nextCursor, hasMore}`.
+- `hasMore=false` quando a página tem menos de 20 itens.
+- Substitui `subscribeClosedOrders` (removida).
+
+**`src/pages/Staff.jsx`** — histórico reescrito:
+- Estados: `closedCursor`, `hasMoreClosed`, `loadingMoreClosed`.
+- `loadClosedPage(replace)` — carrega próxima página (ou substitui
+  se `replace=true`).
+- Carrega primeira página quando o utilizador muda para a vista
+  de histórico.
+- Recarrega quando o filtro de data muda.
+- Botão **"Carregar Mais"** no fundo da lista com spinner durante
+  o carregamento.
+- Mensagem "Fim do histórico · N contas carregadas" quando não há
+  mais dados.
+
+### 2. Limpeza de estados intermédios
+
+**`src/lib/db.js → createOrder`**:
+- Removido campo `status` do payload (não há estados individuais).
+- `tryMergeWithRecebidoOrder` renomeado para `tryMergeWithOpenOrder`:
+  agora faz merge baseado apenas em `tab_status === "open"` (não
+  mais em `status === "recebido"`). Isto significa que TODOS os
+  pedidos de uma mesa aberta são merged num único doc até o staff
+  fechar a conta.
+- Modelo final: só `tab_status: "open" | "closed"`.
+
+**`src/components/admin/TableTab.jsx`** — reescrito:
+- Removidos: `STATUS_FLOW`, `STATUS_META`, `normalizeStatus`,
+  `statusCounts`, `advancingIds`, `handleAdvanceStatus`, botões
+  "Marcar como Pronto/Entregue", badges de estado por pedido.
+- UI agora mostra apenas: lista consolidada de itens + total +
+  botão "Limpar Mesa". Simples e direto.
+
+**`src/components/admin/OrderCard.jsx`** — reescrito:
+- Removidos: `statusColors`, `statusLabel`, `nextStatus`,
+  `nextLabel`, `normalizeStatus`, `handleAdvance`, botão de
+  avançar estado, decremento de stock.
+- Mantém: indicador visual de `tab_status` (faixa verde/cinzenta
+  no topo), itens, notes, total.
+- Removido prop `onUpdate` (não precisa mais).
+
+**`src/pages/Admin.jsx`** — `OrderCard` chamado sem `onUpdate`.
+
+### 3. Rejeição confirmada
+
+- NÃO implementados jobs de limpeza automática (dados são precisos
+  para contabilidade — manter tudo no Firestore).
+- NÃO implementados múltiplos alertas sonoros.
+- NÃO implementados estados intermédios de preparação.
+
+**Estado final**
+
+- Build OK.
+- Histórico carrega 20 contas de cada vez (páginação sob demanda).
+- Modelo Open Tabs puro: só `tab_status: open|closed`. Sem estados
+  individuais de pedido.
+- UI do /staff foca em: itens pedidos + botão "Limpar Mesa".
+- Merge automático: todos os pedidos de uma mesa aberta são
+  consolidados num único doc até o staff fechar a conta.

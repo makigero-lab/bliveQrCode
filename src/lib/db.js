@@ -27,6 +27,8 @@ import {
   query,
   where,
   orderBy,
+  limit,
+  startAfter,
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
@@ -160,15 +162,14 @@ export async function createOrder(data) {
   const tableStr = String(data.table || data.table_number || "1");
 
   // === Lógica de merge ===
-  // Se o pedido anterior dessa mesa ainda estiver em estado "recebido"
-  // (ainda não foi tratado pelo staff), JUNTAMOS os novos itens a esse
-  // pedido em vez de criar um novo. Isto evita ter 3 pedidos
-  // "recebido" separados da mesma mesa só porque o cliente adicionou
-  // items em 3 cliques seguidos.
+  // Modelo Open Tabs: se a mesa ainda tem conta aberta (tab_status="open"),
+  // JUNTAMOS os novos itens ao pedido existente em vez de criar novo doc.
+  // Isto evita ter 10 pedidos separados da mesma mesa só porque o cliente
+  // adicionou items em cliques separados ao longo da noite.
   //
-  // Se o pedido anterior já estiver em "pronto" ou "entregue", criamos
-  // um novo documento — o cliente está a fazer um pedido "extra".
-  const mergeResult = await tryMergeWithRecebidoOrder(tableStr, data.items, data.notes);
+  // Quando o staff fecha a conta (tab_status → "closed"), a mesa fica
+  // "limpa" e o próximo pedido cria um novo documento.
+  const mergeResult = await tryMergeWithOpenOrder(tableStr, data.items, data.notes);
 
   if (mergeResult.merged) {
     console.info(`[db] Pedido merged com ${mergeResult.id} (mesa ${tableStr}).`);
@@ -188,11 +189,8 @@ export async function createOrder(data) {
       total: Number(i.total) || 0,
     })),
     total_amount: Number(data.total_amount) || 0,
-    // NOVO fluxo de estados:
-    //   recebido → pronto → entregue
-    // (mantemos "pendente" como alias legacy para pedidos antigos)
-    status: "recebido",
     // Estado da conta (open = mesa aberta; closed = mesa fechada/paga)
+    // Não há estados intermédios — modelo Open Tabs simples.
     tab_status: data.tab_status || "open",
     // Campos opcionais
     notes: data.notes || null,
@@ -210,27 +208,30 @@ export async function createOrder(data) {
 }
 
 /**
- * Procura um pedido "recebido" aberto (tab_status=open, status=recebido)
- * da mesa indicada. Se existir, faz merge dos novos itens:
+ * Procura um pedido aberto (tab_status=open) da mesa indicada.
+ * Se existir, faz merge dos novos itens:
  *   - Para cada item novo, se já existe um com o mesmo product_id,
  *     soma as quantidades e o total.
  *   - Se não existe, adiciona como novo item no array.
  *   - Soma o total_amount.
  *   - Se houver notes novas, concatena com as existentes.
  *
+ * Modelo Open Tabs: só faz merge se a conta ainda está aberta. Quando
+ * o staff fecha a conta (tab_status → "closed"), a próxima vez que o
+ * cliente pedir cria um novo documento.
+ *
  * @param {string} tableStr
  * @param {Array} newItems
  * @param {string|null} newNotes
  * @returns {Promise<{merged: boolean, id?: string, order?: object}>}
  */
-async function tryMergeWithRecebidoOrder(tableStr, newItems, newNotes) {
+async function tryMergeWithOpenOrder(tableStr, newItems, newNotes) {
   try {
-    // Procura pedidos recebidos abertos da mesa
+    // Procura pedidos abertos da mesa
     const q = query(
       collection(db, "orders"),
       where("tab_status", "==", "open"),
-      where("table", "==", tableStr),
-      where("status", "==", "recebido")
+      where("table", "==", tableStr)
     );
     const snap = await getDocs(q);
 
@@ -239,19 +240,17 @@ async function tryMergeWithRecebidoOrder(tableStr, newItems, newNotes) {
       const q2 = query(
         collection(db, "orders"),
         where("tab_status", "==", "open"),
-        where("table_number", "==", tableStr),
-        where("status", "==", "recebido")
+        where("table_number", "==", tableStr)
       );
       const snap2 = await getDocs(q2);
       if (snap2.empty) return { merged: false };
       return _doMerge(snap2.docs[0], newItems, newNotes);
     }
 
-    // Faz merge com o primeiro pedido "recebido" encontrado
-    // (se houver vários, é anomalia — mas faz merge com o mais antigo)
+    // Faz merge com o primeiro pedido aberto encontrado
     return _doMerge(snap.docs[0], newItems, newNotes);
   } catch (err) {
-    console.warn("[db] tryMergeWithRecebidoOrder falhou (cria novo):", err.message);
+    console.warn("[db] tryMergeWithOpenOrder falhou (cria novo):", err.message);
     return { merged: false };
   }
 }
@@ -466,12 +465,95 @@ export function subscribeOpenOrders(callback) {
 }
 
 /**
- * Subscreve pedidos com `tab_status == 'closed'` (histórico).
- * @param {(event: {type, id?, data?}) => void} callback
- * @returns {() => void} unsubscribe
+ * Carrega UMA PÁGINA de pedidos com `tab_status == 'closed'`
+ * (histórico) — usado pelo Staff.jsx para paginação sob demanda.
+ *
+ * Em vez de carregar todos os pedidos fechados de uma vez (que
+ * esgota as reads gratuitas do Firestore), carrega 20 de cada
+ * vez. O Staff.jsx chama esta função quando o utilizador clica
+ * em "Carregar Mais".
+ *
+ * Ordenação: por `closed_at` desc (mais recente primeiro).
+ * Fallback: se a query com orderBy falhar, usa `created_date` desc.
+ *
+ * @param {object} [cursor] — cursor da última página (objeto do
+ *   último documento carregado). Se null/undefined, carrega a
+ *   primeira página.
+ * @param {number} [pageSize=20] — tamanho da página.
+ * @returns {Promise<{items: Array, nextCursor: object|null, hasMore: boolean}>}
+ *   `nextCursor` é o último doc da página (para passar na próxima
+ *   chamada). `hasMore=false` se esta página tiver menos de
+ *   `pageSize` itens (não há mais dados).
  */
-export function subscribeClosedOrders(callback) {
-  return subscribeByTabStatus("closed", callback);
+export async function loadClosedOrdersPage(cursor, pageSize = 20) {
+  try {
+    let q = query(
+      collection(db, "orders"),
+      where("tab_status", "==", "closed"),
+      orderBy("closed_at", "desc"),
+      limit(pageSize)
+    );
+
+    if (cursor) {
+      q = query(q, startAfter(cursor));
+    }
+
+    const snap = await getDocs(q);
+
+    if (snap.empty) {
+      return { items: [], nextCursor: null, hasMore: false };
+    }
+
+    const items = snap.docs.map((d) =>
+      normalizeTimestamp({ id: d.id, ...d.data() })
+    );
+
+    // Se veio menos que pageSize, não há mais dados
+    const hasMore = snap.docs.length === pageSize;
+    const nextCursor = hasMore ? snap.docs[snap.docs.length - 1] : null;
+
+    return { items, nextCursor, hasMore };
+  } catch (err) {
+    console.error("[db] loadClosedOrdersPage error:", err);
+
+    // Fallback: sem orderBy (legacy) — ordena no cliente
+    try {
+      let q = query(
+        collection(db, "orders"),
+        where("tab_status", "==", "closed"),
+        limit(pageSize)
+      );
+
+      if (cursor) {
+        q = query(q, startAfter(cursor));
+      }
+
+      const snap = await getDocs(q);
+      const items = snap.docs
+        .map((d) => normalizeTimestamp({ id: d.id, ...d.data() }))
+        .sort((a, b) => {
+          const aT = a.closed_at
+            ? new Date(a.closed_at).getTime()
+            : a.created_date
+            ? new Date(a.created_date).getTime()
+            : 0;
+          const bT = b.closed_at
+            ? new Date(b.closed_at).getTime()
+            : b.created_date
+            ? new Date(b.created_date).getTime()
+            : 0;
+          return bT - aT;
+        });
+
+      const hasMore = snap.docs.length === pageSize;
+      const nextCursor = hasMore ? snap.docs[snap.docs.length - 1] : null;
+
+      return { items, nextCursor, hasMore };
+    } catch (fallbackErr) {
+      console.error("[db] loadClosedOrdersPage fallback error:", fallbackErr);
+      return { items: [], nextCursor: null, hasMore: false };
+    }
+  }
 }
 
 function subscribeByTabStatus(tabStatus, callback) {

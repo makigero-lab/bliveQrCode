@@ -2,25 +2,13 @@
 // -------------------------------------------------------------
 // Cartão de Mesa (Open Tab) para o ecrã /staff.
 //
-// Mostra uma mesa aberta (todos os pedidos com tab_status=="open"
-// dessa mesa) numa única card consolidada:
-//   - Número da mesa no topo
-//   - Lista de pedidos individuais, cada um com:
-//       • horário
-//       • itens
-//       • estado (recebido → pronto → entregue)
-//       • botões para avançar o estado
-//   - Valor total a pagar (soma de todos os pedidos)
-//   - Botão "Limpar Mesa" que faz batch update (tab_status → closed)
+// Modelo Open Tabs (simples, sem estados intermédios):
+//   - Mesa aberta: mostra itens pedidos + total + botão "Limpar Mesa"
+//   - Mesa fechada: desaparece deste ecrã (vai para o Histórico)
 //
-// Fluxo de estados de cada pedido:
-//   recebido → pronto → entregue
-//
-// Lógica de merge (em db.js createOrder):
-//   Se o cliente fizer novo pedido enquanto o anterior ainda está
-//   "recebido", os itens são somados ao pedido existente (em vez
-//   de criar novo doc). Só quando o pedido está "pronto" ou
-//   "entregue" é que um novo pedido cria um novo documento.
+// Sem estados "recebido/pronto/entregue" — o staff não tem tempo
+// para gerir preparação individual de pedidos num bar noturno.
+// Quando o cliente paga, o staff clica "Limpar Mesa" e fecha a conta.
 // -------------------------------------------------------------
 
 import { useState, useMemo } from "react";
@@ -32,57 +20,14 @@ import {
   MessageSquare,
   Clock,
   Wine,
-  CheckCircle2,
-  ChefHat,
-  PackageCheck,
-  Bell,
 } from "lucide-react";
-import { closeTableOrders, updateOrder } from "@/lib/db";
+import { closeTableOrders } from "@/lib/db";
 import { useAuth } from "@/lib/AuthContext";
-
-// Estados possíveis de um pedido (fluxo linear)
-const STATUS_FLOW = ["recebido", "pronto", "entregue"];
-
-const STATUS_META = {
-  recebido: {
-    label: "Recebido",
-    color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-    icon: Bell,
-    nextLabel: "Marcar como Pronto",
-    nextIcon: ChefHat,
-  },
-  pronto: {
-    label: "Pronto",
-    color: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-    icon: ChefHat,
-    nextLabel: "Marcar como Entregue",
-    nextIcon: PackageCheck,
-  },
-  entregue: {
-    label: "Entregue",
-    color: "bg-green-500/20 text-green-400 border-green-500/30",
-    icon: PackageCheck,
-    nextLabel: null,
-    nextIcon: null,
-  },
-};
-
-// Compatibilidade: pedidos antigos com status "pendente" são
-// tratados como "recebido" para efeitos de UI.
-function normalizeStatus(status) {
-  if (!status) return "recebido";
-  if (status === "pendente" || status === "confirmado" || status === "em_preparacao") {
-    return "recebido";
-  }
-  if (status === "pago") return "entregue";
-  return STATUS_FLOW.includes(status) ? status : "recebido";
-}
 
 export default function TableTab({ tableNumber, orders }) {
   const [expanded, setExpanded] = useState(true);
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState("");
-  const [advancingIds, setAdvancingIds] = useState(new Set());
   const { user } = useAuth();
 
   // Total a pagar — soma de todos os pedidos
@@ -91,7 +36,8 @@ export default function TableTab({ tableNumber, orders }) {
     0
   );
 
-  // Lista consolidada de itens — para o resumo do header
+  // Lista consolidada de itens — junta todos os pedidos da mesa,
+  // somando as quantidades do mesmo produto (por product_id).
   const consolidatedItems = useMemo(() => {
     const map = new Map();
     for (const order of orders) {
@@ -114,27 +60,17 @@ export default function TableTab({ tableNumber, orders }) {
         }
       }
     }
+    // Ordena por ordem decrescente de quantidade
     return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity);
   }, [orders]);
 
-  // Pedidos ordenados por data (mais recente primeiro)
-  const sortedOrders = useMemo(() => {
-    return [...orders].sort((a, b) => {
-      const aT = a.created_date ? new Date(a.created_date).getTime() : 0;
-      const bT = b.created_date ? new Date(b.created_date).getTime() : 0;
-      return bT - aT;
-    });
-  }, [orders]);
-
-  // Conta pedidos por estado (para o header)
-  const statusCounts = useMemo(() => {
-    const counts = { recebido: 0, pronto: 0, entregue: 0 };
-    for (const o of orders) {
-      const s = normalizeStatus(o.status);
-      counts[s] = (counts[s] || 0) + 1;
-    }
-    return counts;
-  }, [orders]);
+  // Notas consolidadas (todas as notas de todos os pedidos)
+  const allNotes = orders
+    .filter((o) => o.notes)
+    .map((o) => ({
+      note: o.notes,
+      time: o.created_date,
+    }));
 
   // Horário do pedido mais recente
   const latestTime = orders.reduce((latest, o) => {
@@ -143,6 +79,7 @@ export default function TableTab({ tableNumber, orders }) {
     return t > latest ? t : latest;
   }, 0);
 
+  // Hora do primeiro pedido
   const earliestTime = orders.reduce((earliest, o) => {
     if (!o.created_date) return earliest;
     const t = new Date(o.created_date).getTime();
@@ -155,34 +92,6 @@ export default function TableTab({ tableNumber, orders }) {
       hour: "2-digit",
       minute: "2-digit",
     });
-  };
-
-  // === Avançar estado de um pedido individual ===
-  // recebido → pronto → entregue
-  const handleAdvanceStatus = async (order) => {
-    const currentStatus = normalizeStatus(order.status);
-    const currentIndex = STATUS_FLOW.indexOf(currentStatus);
-    if (currentIndex < 0 || currentIndex >= STATUS_FLOW.length - 1) return;
-
-    const nextStatus = STATUS_FLOW[currentIndex + 1];
-    setAdvancingIds((prev) => new Set([...prev, order.id]));
-
-    try {
-      console.info(
-        `[TableTab] Pedido ${order.id} (mesa ${tableNumber}): ${currentStatus} → ${nextStatus}`
-      );
-      await updateOrder(order.id, { status: nextStatus });
-      // O onSnapshot em Staff.jsx atualiza a UI automaticamente.
-    } catch (err) {
-      console.error(`[TableTab] Erro ao avançar pedido ${order.id}:`, err);
-      setError(`Erro ao atualizar pedido: ${err?.message || ""}`);
-    } finally {
-      setAdvancingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(order.id);
-        return next;
-      });
-    }
   };
 
   const handleClearTable = async () => {
@@ -207,9 +116,13 @@ export default function TableTab({ tableNumber, orders }) {
       console.info(
         `[TableTab] Mesa ${tableNumber} fechada: ${result.closed} pedidos atualizados.`
       );
+      // O onSnapshot em Staff.jsx deteta a mudança de tab_status
+      // automaticamente e remove a mesa do ecrã.
     } catch (err) {
       console.error(`[TableTab] Erro ao fechar mesa ${tableNumber}:`, err);
-      setError(`Erro ao fechar mesa: ${err?.message || "verifica a consola."}`);
+      setError(
+        `Erro ao fechar mesa: ${err?.message || "verifica a consola."}`
+      );
     } finally {
       setClearing(false);
     }
@@ -221,7 +134,7 @@ export default function TableTab({ tableNumber, orders }) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="bg-card border border-primary/30 rounded-2xl overflow-hidden shadow-lg shadow-primary/5"
+      className="bg-card border border-primary/30 border-l-4 border-l-green-500 rounded-2xl overflow-hidden shadow-lg shadow-primary/5"
     >
       {/* Cabeçalho — número da mesa + total + botão expandir */}
       <div
@@ -248,22 +161,6 @@ export default function TableTab({ tableNumber, orders }) {
               <span className="opacity-50">
                 · {orders.length} pedido{orders.length !== 1 ? "s" : ""}
               </span>
-              {/* Badges de contagem por estado */}
-              {statusCounts.recebido > 0 && (
-                <span className="bg-yellow-500/15 text-yellow-400 px-1.5 py-0.5 rounded-md font-medium">
-                  {statusCounts.recebido} recebido{statusCounts.recebido !== 1 ? "s" : ""}
-                </span>
-              )}
-              {statusCounts.pronto > 0 && (
-                <span className="bg-blue-500/15 text-blue-400 px-1.5 py-0.5 rounded-md font-medium">
-                  {statusCounts.pronto} pronto{statusCounts.pronto !== 1 ? "s" : ""}
-                </span>
-              )}
-              {statusCounts.entregue > 0 && (
-                <span className="bg-green-500/15 text-green-400 px-1.5 py-0.5 rounded-md font-medium">
-                  {statusCounts.entregue} entregue{statusCounts.entregue !== 1 ? "s" : ""}
-                </span>
-              )}
             </p>
           </div>
         </div>
@@ -284,132 +181,61 @@ export default function TableTab({ tableNumber, orders }) {
         </div>
       </div>
 
-      {/* Corpo — pedidos individuais com estado e botões */}
+      {/* Corpo — lista consolidada de itens */}
       {expanded && (
-        <div className="px-4 py-3 space-y-3">
-          {sortedOrders.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-2">Sem pedidos.</p>
+        <div className="px-4 py-3 space-y-1.5">
+          {consolidatedItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">Sem itens.</p>
           ) : (
-            sortedOrders.map((order, idx) => {
-              const status = normalizeStatus(order.status);
-              const meta = STATUS_META[status];
-              const StatusIcon = meta.icon;
-              const NextIcon = meta.nextIcon;
-              const isAdvancing = advancingIds.has(order.id);
-              const isLast = idx === sortedOrders.length - 1;
-
-              return (
-                <div
-                  key={order.id}
-                  className={`rounded-xl border border-border/40 overflow-hidden ${
-                    status === "entregue" ? "opacity-60" : ""
-                  }`}
-                >
-                  {/* Linha de cabeçalho do pedido: hora + estado + botão avançar */}
-                  <div className="flex items-center justify-between px-3 py-2 bg-secondary/30">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                        <Clock className="w-2.5 h-2.5" />
-                        {formatTime(new Date(order.created_date).getTime())}
-                      </span>
-                      <span
-                        className={`text-[10px] font-medium px-2 py-0.5 rounded-full border flex items-center gap-1 ${meta.color}`}
-                      >
-                        <StatusIcon className="w-2.5 h-2.5" />
-                        {meta.label}
-                      </span>
-                      {/* Badge de merge (se o pedido foi merged) */}
-                      {Number(order.merge_count) > 0 && (
-                        <span
-                          className="text-[9px] bg-primary/15 text-primary px-1.5 py-0.5 rounded-md font-medium"
-                          title={`Este pedido foi atualizado ${order.merge_count}× com novos itens do cliente`}
-                        >
-                          +{order.merge_count}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Botão avançar estado */}
-                    {meta.nextLabel && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleAdvanceStatus(order);
-                        }}
-                        disabled={isAdvancing}
-                        className="flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-semibold px-2.5 py-1 rounded-lg hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-50"
-                      >
-                        {isAdvancing ? (
-                          <span className="w-3 h-3 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                        ) : (
-                          <NextIcon className="w-3 h-3" />
-                        )}
-                        <span className="hidden sm:inline">{meta.nextLabel}</span>
-                        <span className="sm:hidden">{meta.label === "recebido" ? "Pronto" : "Entregue"}</span>
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Itens do pedido */}
-                  <div className="px-3 py-2 space-y-1">
-                    {(order.items || []).map((item, i) => (
-                      <div
-                        key={`${item.product_id || i}`}
-                        className="flex justify-between text-xs items-center"
-                      >
-                        <span className="text-foreground flex items-center gap-1.5 min-w-0">
-                          <span className="bg-primary/20 text-primary font-bold px-1 py-0.5 rounded text-[10px] flex-shrink-0 min-w-[22px] text-center">
-                            {item.quantity}×
-                          </span>
-                          <span className="truncate">{item.product_name}</span>
-                        </span>
-                        <span className="text-muted-foreground font-medium flex-shrink-0 ml-2">
-                          €{Number(item.total).toFixed(2)}
-                        </span>
-                      </div>
-                    ))}
-
-                    {/* Notas do pedido */}
-                    {order.notes && (
-                      <div className="mt-1 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-2 py-1.5 flex items-start gap-1.5">
-                        <MessageSquare className="w-2.5 h-2.5 text-yellow-400 flex-shrink-0 mt-0.5" />
-                        <p className="text-[10px] text-yellow-300 font-medium">
-                          {order.notes}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })
+            consolidatedItems.map((item, i) => (
+              <div
+                key={`${item.product_id || i}`}
+                className="flex justify-between text-sm items-center"
+              >
+                <span className="text-foreground flex items-center gap-2 min-w-0">
+                  <span className="bg-primary/20 text-primary font-bold px-1.5 py-0.5 rounded-md text-xs flex-shrink-0 min-w-[28px] text-center">
+                    {item.quantity}×
+                  </span>
+                  <span className="truncate">{item.product_name}</span>
+                  {item.orderCount > 1 && (
+                    <span
+                      className="text-[10px] text-muted-foreground/70 flex-shrink-0"
+                      title={`${item.orderCount} pedidos somados`}
+                    >
+                      ({item.orderCount}×)
+                    </span>
+                  )}
+                </span>
+                <span className="text-muted-foreground font-medium flex-shrink-0 ml-2">
+                  €{item.total.toFixed(2)}
+                </span>
+              </div>
+            ))
           )}
 
-          {/* Resumo consolidado (todos os itens somados) */}
-          {sortedOrders.length > 1 && (
-            <div className="mt-2 pt-2 border-t border-border/40">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
-                Resumo consolidado
-              </p>
-              <div className="space-y-0.5">
-                {consolidatedItems.map((item, i) => (
-                  <div
-                    key={`${item.product_id || i}`}
-                    className="flex justify-between text-[11px] items-center opacity-70"
-                  >
-                    <span className="text-foreground flex items-center gap-1.5 min-w-0">
-                      <span className="text-primary font-bold">{item.quantity}×</span>
-                      <span className="truncate">{item.product_name}</span>
+          {/* Notas consolidadas */}
+          {allNotes.length > 0 && (
+            <div className="pt-2 space-y-1.5">
+              {allNotes.map((n, i) => (
+                <div
+                  key={i}
+                  className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-3 py-2 flex items-start gap-2"
+                >
+                  <MessageSquare className="w-3 h-3 text-yellow-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-yellow-300 font-medium flex-1 min-w-0">
+                    {n.note}
+                  </p>
+                  {n.time && (
+                    <span className="text-[10px] text-yellow-400/60 flex-shrink-0">
+                      {formatTime(new Date(n.time).getTime())}
                     </span>
-                    <span className="text-muted-foreground font-medium">
-                      €{item.total.toFixed(2)}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
 
-          {/* Erro */}
+          {/* Erro ao limpar */}
           {error && (
             <div className="mt-2 bg-red-500/10 border border-red-500/30 rounded-xl px-3 py-2 text-xs text-red-300">
               {error}

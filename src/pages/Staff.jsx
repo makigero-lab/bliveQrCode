@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ClipboardList,
@@ -10,6 +10,7 @@ import {
   LogOut,
   RotateCcw,
   Calendar,
+  ChevronDown,
 } from "lucide-react";
 import TableTab from "@/components/admin/TableTab";
 import { useBarSettings } from "@/lib/BarSettingsContext";
@@ -17,7 +18,7 @@ import { useAuth } from "@/lib/AuthContext";
 import { useOrderNotification } from "@/hooks/useOrderNotification";
 import {
   subscribeOpenOrders,
-  subscribeClosedOrders,
+  loadClosedOrdersPage,
   reopenTableOrders,
 } from "@/lib/db";
 
@@ -97,38 +98,60 @@ export default function Staff() {
   }, [playSound]);
 
   // -------------------------------------------------------------
-  // Subscrição: histórico (tab_status="closed")
+  // Histórico (tab_status="closed") — paginação sob demanda
   // -------------------------------------------------------------
-  useEffect(() => {
-    console.info("[Staff] A subscrever HISTÓRICO (tab_status=closed)...");
+  // Em vez de carregar todos os pedidos fechados de uma vez com
+  // onSnapshot (que esgota as reads gratuitas do Firestore),
+  // carregamos 20 de cada vez com getDocs + limit + startAfter.
+  // O utilizador clica "Carregar Mais" para buscar a página seguinte.
+  const [closedCursor, setClosedCursor] = useState(null);
+  const [hasMoreClosed, setHasMoreClosed] = useState(true);
+  const [loadingMoreClosed, setLoadingMoreClosed] = useState(false);
 
-    const unsubscribe = subscribeClosedOrders((event) => {
-      console.info("[Staff][closed] Evento:", event.type, event.id || "");
+  const loadClosedPage = useCallback(
+    async (replace = false) => {
+      if (loadingMoreClosed) return;
+      setLoadingMoreClosed(true);
+      try {
+        const cursor = replace ? null : closedCursor;
+        const result = await loadClosedOrdersPage(cursor, 20);
 
-      if (event.type === "snapshot") {
-        console.info(`[Staff][closed] Snapshot: ${event.data.length} pedidos.`);
-        setClosedOrders(event.data);
+        if (replace) {
+          setClosedOrders(result.items);
+        } else {
+          setClosedOrders((prev) => [...prev, ...result.items]);
+        }
+
+        setClosedCursor(result.nextCursor);
+        setHasMoreClosed(result.hasMore);
         setLoadingClosed(false);
-      } else if (event.type === "create") {
-        // Pedido acabou de ser fechado — aparece no histórico
-        setClosedOrders((prev) => {
-          if (prev.some((o) => o.id === event.id)) return prev;
-          return [event.data, ...prev];
-        });
-      } else if (event.type === "update") {
-        setClosedOrders((prev) =>
-          prev.map((o) => (o.id === event.id ? event.data : o))
-        );
-      } else if (event.type === "delete") {
-        setClosedOrders((prev) => prev.filter((o) => o.id !== event.id));
+      } catch (err) {
+        console.error("[Staff] Erro ao carregar histórico:", err);
+        setLoadingClosed(false);
+      } finally {
+        setLoadingMoreClosed(false);
       }
-    });
+    },
+    [closedCursor, loadingMoreClosed]
+  );
 
-    return () => {
-      console.info("[Staff] A cancelar subscrição do histórico.");
-      unsubscribe();
-    };
-  }, []);
+  // Carrega a primeira página do histórico quando o utilizador
+  // muda para a vista de histórico
+  useEffect(() => {
+    if (view === "history" && closedOrders.length === 0 && !loadingClosed) {
+      loadClosedPage(true);
+    }
+  }, [view, closedOrders.length, loadingClosed, loadClosedPage]);
+
+  // Recarrega a primeira página quando o filtro de data muda
+  useEffect(() => {
+    if (view === "history") {
+      setClosedCursor(null);
+      setHasMoreClosed(true);
+      loadClosedPage(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyFilter]);
 
   // -------------------------------------------------------------
   // Agrupar pedidos abertos por mesa
@@ -522,17 +545,47 @@ export default function Staff() {
                 </p>
               </div>
             ) : (
-              <div className="space-y-3">
-                {closedSessions.map((session) => (
-                  <ClosedSessionCard
-                    key={session.key}
-                    table={session.table}
-                    closedAt={session.closedAt}
-                    orders={session.orders}
-                    total={session.total}
-                  />
-                ))}
-              </div>
+              <>
+                <div className="space-y-3">
+                  {closedSessions.map((session) => (
+                    <ClosedSessionCard
+                      key={session.key}
+                      table={session.table}
+                      closedAt={session.closedAt}
+                      orders={session.orders}
+                      total={session.total}
+                    />
+                  ))}
+                </div>
+
+                {/* Botão Carregar Mais — paginação sob demanda */}
+                {hasMoreClosed && (
+                  <button
+                    onClick={() => loadClosedPage(false)}
+                    disabled={loadingMoreClosed}
+                    className="w-full mt-4 flex items-center justify-center gap-2 bg-card border border-border/50 text-muted-foreground text-sm font-medium py-3 rounded-2xl hover:bg-secondary hover:text-foreground transition-colors disabled:opacity-50"
+                  >
+                    {loadingMoreClosed ? (
+                      <>
+                        <span className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                        A carregar...
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="w-4 h-4" />
+                        Carregar Mais
+                      </>
+                    )}
+                  </button>
+                )}
+                {!hasMoreClosed && closedSessions.length > 0 && (
+                  <p className="text-center text-[10px] text-muted-foreground/50 mt-4">
+                    Fim do histórico · {closedSessions.length} conta
+                    {closedSessions.length !== 1 ? "s" : ""} carregada
+                    {closedSessions.length !== 1 ? "s" : ""}
+                  </p>
+                )}
+              </>
             )}
           </>
         )}

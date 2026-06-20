@@ -312,7 +312,7 @@ export default function Admin() {
             ) : (
               <div className="space-y-3">
                 {filteredOrders.map((o) => (
-                  <OrderCard key={o.id} order={o} onUpdate={loadOrders} />
+                  <OrderCard key={o.id} order={o} />
                 ))}
               </div>
             )}
