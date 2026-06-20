@@ -150,6 +150,8 @@ export default function Admin() {
     if (ordersFilter !== "open") return {};
     const groups = {};
     for (const order of openOrders) {
+      // Ignora pedidos cancelados (todos os itens foram anulados)
+      if (order.status === "cancelado") continue;
       const key = order.table || order.table_number || "1";
       if (!groups[key]) groups[key] = [];
       groups[key].push(order);

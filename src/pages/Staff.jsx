@@ -159,7 +159,8 @@ export default function Staff() {
   const tableGroups = useMemo(() => {
     const groups = {};
     for (const order of openOrders) {
-      // Usa `table` (novo campo); fallback para `table_number` (legacy)
+      // Ignora pedidos cancelados (todos os itens foram anulados)
+      if (order.status === "cancelado") continue;
       const key = order.table || order.table_number || "1";
       if (!groups[key]) groups[key] = [];
       groups[key].push(order);

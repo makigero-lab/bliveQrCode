@@ -67,6 +67,7 @@ const STATUS_META = {
 
 function normalizeStatus(s) {
   if (!s) return "recebido";
+  if (s === "cancelado") return "cancelado";
   if (["pendente", "confirmado", "em_preparacao"].includes(s)) return "recebido";
   if (s === "pago") return "entregue";
   return STATUS_FLOW.includes(s) ? s : "recebido";
@@ -267,15 +268,16 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
       {/* === Corpo — pedidos individuais === */}
       {expanded && (
         <div className="px-4 py-3 space-y-3">
-          {sortedOrders.length === 0 ? (
+          {sortedOrders.filter((o) => normalizeStatus(o.status) !== "cancelado").length === 0 ? (
             <p className="text-sm text-muted-foreground py-2">Sem pedidos.</p>
           ) : (
-            sortedOrders.map((order) => {
+            sortedOrders.filter((o) => normalizeStatus(o.status) !== "cancelado").map((order) => {
               const status = normalizeStatus(order.status);
               const meta = STATUS_META[status];
               const StatusIcon = meta.icon;
               const NextIcon = meta.nextIcon;
               const isAdvancing = advancingIds.has(order.id);
+              const canceledItems = Array.isArray(order.canceled_items) ? order.canceled_items : [];
 
               return (
                 <div
@@ -377,6 +379,33 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
                         <p className="text-[10px] text-yellow-300 font-medium">
                           {order.notes}
                         </p>
+                      </div>
+                    )}
+
+                    {/* Itens cancelados (anulados) — visíveis dentro do pedido */}
+                    {canceledItems.length > 0 && (
+                      <div className="mt-2 pt-1.5 border-t border-border/20 space-y-0.5">
+                        <p className="text-[9px] text-red-400/60 uppercase tracking-wider font-medium mb-1">
+                          Itens anulados ({canceledItems.length})
+                        </p>
+                        {canceledItems.map((ci, ci_i) => (
+                          <div key={ci_i} className="flex justify-between text-[10px] items-center opacity-50">
+                            <span className="text-muted-foreground line-through flex items-center gap-1 min-w-0">
+                              <span className="text-red-400/60 font-semibold">{ci.quantity}×</span>
+                              <span className="truncate">{ci.product_name}</span>
+                            </span>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              {ci.canceled_by_email && (
+                                <span className="text-[8px] text-muted-foreground/50 truncate max-w-[80px]" title={ci.canceled_by_email}>
+                                  {ci.canceled_by_email}
+                                </span>
+                              )}
+                              <span className="text-muted-foreground/50 line-through">
+                                €{Number(ci.total).toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
