@@ -1869,3 +1869,74 @@ no rodapé reescrito:
 - UI do /staff foca em: itens pedidos + botão "Limpar Mesa".
 - Merge automático: todos os pedidos de uma mesa aberta são
   consolidados num único doc até o staff fechar a conta.
+
+---
+
+## 2026-06-20 — Reintrodução de estados + POS Mode + Fechar Conta no Admin
+
+**Tarefas**
+
+1. Reintroduzir estados individuais (recebido → pronto → entregue)
+   no /staff com botões para avançar.
+2. POS Mode: staff adiciona produtos manualmente (+ Adicionar Pedido
+   dentro de cada mesa; + Nova Mesa no topo do /staff).
+3. Botão "Fechar Conta" no /admin (batch update tab_status → closed).
+
+### 1. Estados individuais reintroduzidos
+
+**`src/lib/db.js → createOrder`**: campo `status: "recebido"` voltou
+ao payload. Merge ajustado: só faz merge se o pedido anterior ainda
+está `status === "recebido"` (não se já está "pronto"/"entregue").
+
+**`src/components/admin/TableTab.jsx`**: reescrito com:
+- `STATUS_FLOW = ["recebido", "pronto", "entregue"]`
+- `STATUS_META` com cores, ícones, labels e botões de avanço.
+- `handleAdvanceStatus(order)` — chama `updateOrder(id, {status: next})`.
+- Cada pedido individual dentro da mesa mostra:
+  - Horário + badge de estado (yellow/blue/green).
+  - Botão "Marcar Pronto" (se recebido) ou "Marcar Entregue" (se pronto).
+  - Badge `+N` se foi merged.
+- Header mostra contagens: "2 recebidos, 1 pronto".
+- Compatibilidade: estados legacy mapeados para "recebido".
+
+### 2. POS Mode
+
+**`src/components/admin/POSModal.jsx`** — novo componente:
+- Modal full-screen bottom sheet com:
+  - Pesquisa por nome.
+  - Filtros por categoria (cocktails, bebidas, comida, etc.).
+  - Grid de produtos com imagem, nome, preço.
+  - Botões + / - para ajustar quantidades.
+  - Carrinho com contagem e total.
+  - Botão "Submeter Pedido" → `createOrder({table, items, tab_status: "open", status: "recebido"})`.
+- Carrega produtos via `listAvailableProducts`.
+
+**`src/pages/Staff.jsx`** — integrado:
+- Botão **"+ Adicionar Pedido"** dentro de cada `TableTab` (passa
+  `onAddOrder` prop).
+- Botão **"+ Nova Mesa"** no topo do ecrã /staff → abre `NewTableModal`
+  que lista mesas da coleção `tables` (via `listTables`). O staff
+  escolhe a mesa e o `POSModal` abre para essa mesa.
+- Estado `posModalTable` controla a abertura/fecho do POSModal.
+- Estado `showNewTableModal` controla o modal de seleção de mesa.
+
+### 3. Fechar Conta no Admin
+
+**`src/pages/Admin.jsx`** — atualizado:
+- Import de `closeTableOrders` + ícone `Lock`.
+- Novo estado `closingTables` (Set de mesas a fechar).
+- `handleCloseTableFromAdmin(tableNumber)` — confirmação + batch
+  update + reload.
+- Vista "Mesas Abertas" no separador Pedidos agora agrupa por mesa
+  (como no /staff) com:
+  - Header: número da mesa + total + botão **"Fechar Conta"** (red).
+  - Lista de `OrderCard` por baixo.
+- `adminTableGroups` + `adminSortedTables` computados via useMemo.
+
+**Estado final**
+
+- Build OK.
+- /staff tem estados individuais (recebido→pronto→entregue) + POS
+  mode (+ Adicionar Pedido + Nova Mesa).
+- /admin tem botão "Fechar Conta" em cada mesa aberta.
+- Merge só faz merge se o pedido anterior ainda está "recebido".

@@ -190,16 +190,18 @@ export async function createOrder(data) {
     })),
     total_amount: Number(data.total_amount) || 0,
     // Estado da conta (open = mesa aberta; closed = mesa fechada/paga)
-    // Não há estados intermédios — modelo Open Tabs simples.
     tab_status: data.tab_status || "open",
+    // Estado individual do pedido (linha de montagem):
+    //   recebido → pronto → entregue
+    // Permite que Barman, Empregado de Mesa e Caixa trabalhem em funções
+    // separadas. Default: "recebido" (acaba de entrar no sistema).
+    status: data.status || "recebido",
     // Campos opcionais
     notes: data.notes || null,
-    // Timestamps — usa Date nativo (serializado como ISO string) para
-    // ordenação lexicográfica estável em `orderBy("created_date","desc")`.
+    // Timestamps
     created_date: isoNow,
     updated_date: isoNow,
-    closed_at: null, // preenchido quando tab_status muda para "closed"
-    // serverTimestamp em paralelo para auditoria no Firebase Console
+    closed_at: null,
     _server_created_at: serverTimestamp(),
   };
 
@@ -208,17 +210,14 @@ export async function createOrder(data) {
 }
 
 /**
- * Procura um pedido aberto (tab_status=open) da mesa indicada.
- * Se existir, faz merge dos novos itens:
- *   - Para cada item novo, se já existe um com o mesmo product_id,
- *     soma as quantidades e o total.
- *   - Se não existe, adiciona como novo item no array.
- *   - Soma o total_amount.
- *   - Se houver notes novas, concatena com as existentes.
+ * Procura um pedido aberto (tab_status=open) e "recebido" (ainda não
+ * foi tratado pelo barman) da mesa indicada. Se existir, faz merge
+ * dos novos itens.
  *
- * Modelo Open Tabs: só faz merge se a conta ainda está aberta. Quando
- * o staff fecha a conta (tab_status → "closed"), a próxima vez que o
- * cliente pedir cria um novo documento.
+ * Só faz merge se o pedido anterior ainda está "recebido" — se já
+ * está "pronto" ou "entregue", cria um novo documento (o cliente
+ * está a fazer um pedido extra depois da primeira ronda já ter sido
+ * preparada).
  *
  * @param {string} tableStr
  * @param {Array} newItems
@@ -227,11 +226,12 @@ export async function createOrder(data) {
  */
 async function tryMergeWithOpenOrder(tableStr, newItems, newNotes) {
   try {
-    // Procura pedidos abertos da mesa
+    // Procura pedidos abertos e "recebido" da mesa
     const q = query(
       collection(db, "orders"),
       where("tab_status", "==", "open"),
-      where("table", "==", tableStr)
+      where("table", "==", tableStr),
+      where("status", "==", "recebido")
     );
     const snap = await getDocs(q);
 
@@ -240,14 +240,15 @@ async function tryMergeWithOpenOrder(tableStr, newItems, newNotes) {
       const q2 = query(
         collection(db, "orders"),
         where("tab_status", "==", "open"),
-        where("table_number", "==", tableStr)
+        where("table_number", "==", tableStr),
+        where("status", "==", "recebido")
       );
       const snap2 = await getDocs(q2);
       if (snap2.empty) return { merged: false };
       return _doMerge(snap2.docs[0], newItems, newNotes);
     }
 
-    // Faz merge com o primeiro pedido aberto encontrado
+    // Faz merge com o primeiro pedido "recebido" encontrado
     return _doMerge(snap.docs[0], newItems, newNotes);
   } catch (err) {
     console.warn("[db] tryMergeWithOpenOrder falhou (cria novo):", err.message);

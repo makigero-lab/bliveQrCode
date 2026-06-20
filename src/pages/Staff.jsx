@@ -11,8 +11,11 @@ import {
   RotateCcw,
   Calendar,
   ChevronDown,
+  Plus,
+  X,
 } from "lucide-react";
 import TableTab from "@/components/admin/TableTab";
+import POSModal from "@/components/admin/POSModal";
 import { useBarSettings } from "@/lib/BarSettingsContext";
 import { useAuth } from "@/lib/AuthContext";
 import { useOrderNotification } from "@/hooks/useOrderNotification";
@@ -20,6 +23,7 @@ import {
   subscribeOpenOrders,
   loadClosedOrdersPage,
   reopenTableOrders,
+  listTables,
 } from "@/lib/db";
 
 export default function Staff() {
@@ -40,6 +44,10 @@ export default function Staff() {
   const [historyFilter, setHistoryFilter] = useState("today");
   const soundEnabledRef = useRef(true);
   const knownIdsRef = useRef(new Set());
+
+  // === POS Modal state ===
+  const [posModalTable, setPosModalTable] = useState(null); // null = fechado; string = mesa
+  const [showNewTableModal, setShowNewTableModal] = useState(false);
 
   const { settings } = useBarSettings();
   const { user, logout } = useAuth();
@@ -436,14 +444,23 @@ export default function Staff() {
                   ? "Sem mesas abertas"
                   : `${sortedTables.length} mesa${sortedTables.length !== 1 ? "s" : ""} aberta${sortedTables.length !== 1 ? "s" : ""}`}
               </h2>
-              {sortedTables.length > 0 && (
-                <p className="text-sm text-muted-foreground">
-                  Total em aberto:{" "}
-                  <span className="text-primary font-bold">
-                    €{totalAberto.toFixed(2)}
-                  </span>
-                </p>
-              )}
+              <div className="flex items-center gap-2">
+                {sortedTables.length > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    Total:{" "}
+                    <span className="text-primary font-bold">
+                      €{totalAberto.toFixed(2)}
+                    </span>
+                  </p>
+                )}
+                <button
+                  onClick={() => setShowNewTableModal(true)}
+                  className="flex items-center gap-1 bg-primary text-primary-foreground text-xs font-semibold px-3 py-2 rounded-xl hover:bg-primary/90 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Nova Mesa
+                </button>
+              </div>
             </div>
 
             {loadingOpen ? (
@@ -470,6 +487,7 @@ export default function Staff() {
                     key={table}
                     tableNumber={table}
                     orders={tableGroups[table]}
+                    onAddOrder={(t) => setPosModalTable(t)}
                   />
                 ))}
               </div>
@@ -590,7 +608,112 @@ export default function Staff() {
           </>
         )}
       </div>
+
+      {/* === POS Modal — adicionar produtos a uma mesa === */}
+      <AnimatePresence>
+        {posModalTable && (
+          <POSModal
+            tableNumber={posModalTable}
+            onClose={() => setPosModalTable(null)}
+            onSubmitted={() => {
+              console.info(`[Staff] Pedido POS submetido para mesa ${posModalTable}.`);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* === Nova Mesa Modal — escolher mesa da coleção tables === */}
+      <AnimatePresence>
+        {showNewTableModal && (
+          <NewTableModal
+            onClose={() => setShowNewTableModal(false)}
+            onSelectTable={(tableNumber) => {
+              setShowNewTableModal(false);
+              setPosModalTable(tableNumber);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+// -------------------------------------------------------------
+// Subcomponente: Modal "Nova Mesa" — lista mesas da coleção tables
+// -------------------------------------------------------------
+function NewTableModal({ onClose, onSelectTable }) {
+  const [tables, setTables] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    listTables()
+      .then((data) => {
+        setTables(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error("[NewTableModal] Erro:", err);
+        setError("Não foi possível carregar as mesas.");
+        setLoading(false);
+      });
+  }, []);
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50"
+        onClick={onClose}
+      />
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="fixed inset-x-4 top-1/2 -translate-y-1/2 z-50 bg-card rounded-3xl p-6 border border-border max-w-md mx-auto max-h-[80vh] flex flex-col"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-playfair font-semibold text-xl">Nova Mesa</h2>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center"
+          >
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">
+          Seleciona a mesa para iniciar o atendimento. O pedido será
+          associado a essa mesa com <code className="text-primary">tab_status: "open"</code>.
+        </p>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <span className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+          </div>
+        ) : error ? (
+          <p className="text-sm text-red-400 text-center py-8">{error}</p>
+        ) : tables.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-8">
+            Nenhuma mesa registada. Cria mesas no painel Admin → QR.
+          </p>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 overflow-y-auto">
+            {tables.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => onSelectTable(t.table_number)}
+                className="bg-secondary/50 border border-border/40 rounded-xl p-4 hover:bg-primary/10 hover:border-primary/30 transition-colors text-center"
+              >
+                <Wine className="w-5 h-5 text-primary mx-auto mb-1" />
+                <p className="font-bold text-sm">Mesa {t.table_number}</p>
+              </button>
+            ))}
+          </div>
+        )}
+      </motion.div>
+    </>
   );
 }
 

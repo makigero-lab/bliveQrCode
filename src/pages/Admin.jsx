@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, RefreshCw, LayoutGrid, ClipboardList, QrCode, Trash2, Pencil, Wine, BarChart2, Settings, Wifi, PackageOpen, LineChart, Users, LogOut, Wrench } from "lucide-react";
+import { Plus, RefreshCw, LayoutGrid, ClipboardList, QrCode, Trash2, Pencil, Wine, BarChart2, Settings, Wifi, PackageOpen, LineChart, Users, LogOut, Wrench, Lock } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import OrderCard from "@/components/admin/OrderCard";
 import ProductForm from "@/components/admin/ProductForm";
@@ -23,6 +23,7 @@ import {
   updateProduct,
   deleteProduct,
   subscribeOrders,
+  closeTableOrders,
 } from "@/lib/db";
 
 // Tabs base — visíveis para todos os autenticados.
@@ -145,6 +146,61 @@ export default function Admin() {
   // tab_status diretamente.
   const activeOrders = openOrders;
   const doneOrders = closedOrders;
+
+  // === Fechar conta (batch update tab_status → closed) ===
+  // Permite ao Admin fechar contas diretamente do painel, sem
+  // precisar de ir ao /staff. Útil para supervisão.
+  const [closingTables, setClosingTables] = useState(new Set());
+
+  const handleCloseTableFromAdmin = async (tableNumber) => {
+    const tableOrders = openOrders.filter(
+      (o) => (o.table || o.table_number) === tableNumber
+    );
+    const total = tableOrders.reduce(
+      (s, o) => s + (Number(o.total_amount) || 0),
+      0
+    );
+
+    if (!window.confirm(
+      `Fechar a conta da Mesa ${tableNumber}?\n\n` +
+        `${tableOrders.length} pedido${tableOrders.length !== 1 ? "s" : ""}\n` +
+        `Total: €${total.toFixed(2)}\n\nConfirmar?`
+    )) return;
+
+    setClosingTables((prev) => new Set([...prev, tableNumber]));
+    try {
+      await closeTableOrders(tableNumber, user);
+      console.info(`[Admin] Mesa ${tableNumber} fechada pelo admin ${user?.email}.`);
+      await loadOrders();
+    } catch (err) {
+      console.error(`[Admin] Erro ao fechar mesa ${tableNumber}:`, err);
+      alert(`Erro: ${err?.message || ""}`);
+    } finally {
+      setClosingTables((prev) => {
+        const next = new Set(prev);
+        next.delete(tableNumber);
+        return next;
+      });
+    }
+  };
+
+  // Agrupar pedidos abertos por mesa (para vista "Mesas Abertas" no Admin)
+  const adminTableGroups = useMemo(() => {
+    if (ordersFilter !== "open") return {};
+    const groups = {};
+    for (const order of openOrders) {
+      const key = order.table || order.table_number || "1";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(order);
+    }
+    return groups;
+  }, [openOrders, ordersFilter]);
+
+  const adminSortedTables = Object.keys(adminTableGroups).sort((a, b) => {
+    const numA = parseInt(a) || 0;
+    const numB = parseInt(b) || 0;
+    return numA - numB;
+  });
 
   const handleDeleteProduct = async (id) => {
     try {
@@ -308,6 +364,56 @@ export default function Admin() {
                   {ordersFilter === "closed" && "Quando o staff fecha uma mesa no /staff, a conta aparece aqui."}
                   {ordersFilter === "all" && "Pedidos aparecerão aqui assim que forem criados no /menu."}
                 </p>
+              </div>
+            ) : ordersFilter === "open" ? (
+              /* Vista Mesas Abertas: agrupado por mesa com botão Fechar Conta */
+              <div className="space-y-4">
+                {adminSortedTables.map((table) => {
+                  const tableOrders = adminTableGroups[table];
+                  const tableTotal = tableOrders.reduce(
+                    (s, o) => s + (Number(o.total_amount) || 0),
+                    0
+                  );
+                  const isClosing = closingTables.has(table);
+                  return (
+                    <div
+                      key={table}
+                      className="bg-card border border-primary/30 border-l-4 border-l-green-500 rounded-2xl overflow-hidden"
+                    >
+                      {/* Header da mesa */}
+                      <div className="flex items-center justify-between px-4 py-3 bg-primary/5 border-b border-border/40">
+                        <div className="flex items-center gap-2">
+                          <Wine className="w-4 h-4 text-primary" />
+                          <p className="font-playfair font-bold text-base">
+                            Mesa {table}
+                          </p>
+                          <span className="text-[10px] text-muted-foreground">
+                            {tableOrders.length} pedido{tableOrders.length !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <p className="font-bold text-primary text-sm">
+                            €{tableTotal.toFixed(2)}
+                          </p>
+                          <button
+                            onClick={() => handleCloseTableFromAdmin(table)}
+                            disabled={isClosing}
+                            className="flex items-center gap-1 bg-red-500 text-white text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-red-600 active:scale-95 transition-all disabled:opacity-50"
+                          >
+                            <Lock className="w-3 h-3" />
+                            {isClosing ? "A fechar..." : "Fechar Conta"}
+                          </button>
+                        </div>
+                      </div>
+                      {/* Pedidos da mesa */}
+                      <div className="divide-y divide-border/30">
+                        {tableOrders.map((o) => (
+                          <OrderCard key={o.id} order={o} />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div className="space-y-3">
