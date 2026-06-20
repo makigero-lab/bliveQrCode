@@ -25,8 +25,9 @@ import {
   PackageCheck,
   Bell,
   CheckCircle2,
+  XCircle,
 } from "lucide-react";
-import { closeTableOrders, updateOrder } from "@/lib/db";
+import { closeTableOrders, updateOrder, deleteOrder } from "@/lib/db";
 import { useAuth } from "@/lib/AuthContext";
 
 // Fluxo de estados: recebido → pronto → entregue
@@ -132,6 +133,25 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
         next.delete(order.id);
         return next;
       });
+    }
+  };
+
+  // === Cancelar/anular um pedido individual ===
+  // Apaga o documento da coleção orders. O onSnapshot atualiza a UI
+  // automaticamente. Útil para corrigir erros de registo do staff.
+  const handleCancelOrder = async (e, order) => {
+    e.stopPropagation();
+    const confirm = window.confirm(
+      `Anular este pedido?\n\n` +
+        `${(order.items || []).length} item(s) · €${Number(order.total_amount).toFixed(2)}\n\n` +
+        `O pedido será removido permanentemente.`
+    );
+    if (!confirm) return;
+
+    try {
+      await deleteOrder(order.id);
+    } catch (err) {
+      setError(`Erro ao anular pedido: ${err?.message || ""}`);
     }
   };
 
@@ -261,24 +281,34 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
                         </span>
                       )}
                     </div>
-                    {meta.nextLabel && (
+                    <div className="flex items-center gap-1">
+                      {meta.nextLabel && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAdvanceStatus(order);
+                          }}
+                          disabled={isAdvancing}
+                          className="flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-semibold px-2.5 py-1 rounded-lg hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-50"
+                        >
+                          {isAdvancing ? (
+                            <span className="w-3 h-3 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                          ) : (
+                            <NextIcon className="w-3 h-3" />
+                          )}
+                          <span className="hidden sm:inline">{meta.nextLabel}</span>
+                          <span className="sm:hidden">{meta.label === "recebido" ? "Pronto" : "Entregue"}</span>
+                        </button>
+                      )}
+                      {/* Botão Cancelar/Anular pedido */}
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleAdvanceStatus(order);
-                        }}
-                        disabled={isAdvancing}
-                        className="flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-semibold px-2.5 py-1 rounded-lg hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-50"
+                        onClick={(e) => handleCancelOrder(e, order)}
+                        title="Anular pedido"
+                        className="w-7 h-7 rounded-lg bg-red-500/10 flex items-center justify-center hover:bg-red-500/20 transition-colors"
                       >
-                        {isAdvancing ? (
-                          <span className="w-3 h-3 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                        ) : (
-                          <NextIcon className="w-3 h-3" />
-                        )}
-                        <span className="hidden sm:inline">{meta.nextLabel}</span>
-                        <span className="sm:hidden">{meta.label === "recebido" ? "Pronto" : "Entregue"}</span>
+                        <XCircle className="w-3.5 h-3.5 text-red-400" />
                       </button>
-                    )}
+                    </div>
                   </div>
 
                   {/* Itens */}

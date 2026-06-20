@@ -4,7 +4,9 @@ import {
   CircleDot,
   CheckCircle2,
   Receipt,
+  XCircle,
 } from "lucide-react";
+import { deleteOrder } from "@/lib/db";
 
 // Configuração visual do indicador de tab_status (conta aberta vs fechada)
 // Este é o destaque principal do cartão — aparece numa faixa no topo.
@@ -108,17 +110,37 @@ export default function OrderCard({ order }) {
         </div>
       )}
 
-      {/* === Rodapé: total === */}
+      {/* === Rodapé: total + cancelar === */}
       <div className="flex items-center justify-between px-4 py-3 bg-secondary/30 border-t border-border/30">
         <p className="font-bold text-primary text-base">
           €{order.total_amount?.toFixed(2)}
         </p>
-        {isClosed && (
-          <span className="text-muted-foreground text-sm font-semibold flex items-center gap-1">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            Fechada
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {isClosed && (
+            <span className="text-muted-foreground text-sm font-semibold flex items-center gap-1">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Fechada
+            </span>
+          )}
+          {!isClosed && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (window.confirm(
+                  `Anular este pedido?\n\n` +
+                    `${(order.items || []).length} item(s) · €${Number(order.total_amount || 0).toFixed(2)}\n\n` +
+                    `O pedido será removido permanentemente.`
+                )) {
+                  deleteOrder(order.id);
+                }
+              }}
+              title="Anular pedido"
+              className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center hover:bg-red-500/20 transition-colors"
+            >
+              <XCircle className="w-4 h-4 text-red-400" />
+            </button>
+          )}
+        </div>
       </div>
     </motion.div>
   );

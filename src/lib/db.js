@@ -358,6 +358,52 @@ export async function deleteOrder(id) {
 }
 
 /**
+ * Lista todos os pedidos abertos (tab_status="open") de uma mesa
+ * específica. Usado pelo ecrã "A Minha Conta" no Menu do cliente.
+ *
+ * @param {string} tableStr — número da mesa
+ * @returns {Promise<Array>}
+ */
+export async function listOpenOrdersByTable(tableStr) {
+  const table = String(tableStr);
+  try {
+    const q = query(
+      collection(db, "orders"),
+      where("tab_status", "==", "open"),
+      where("table", "==", table)
+    );
+    const snap = await getDocs(q);
+    const items = snap.docs
+      .map((d) => normalizeTimestamp({ id: d.id, ...d.data() }))
+      .sort((a, b) => {
+        const aT = a.created_date ? new Date(a.created_date).getTime() : 0;
+        const bT = b.created_date ? new Date(b.created_date).getTime() : 0;
+        return aT - bT; // asc — mais antigo primeiro (ordem de pedido)
+      });
+    return items;
+  } catch (err) {
+    // Fallback: pedidos legacy sem `table`
+    try {
+      const q2 = query(
+        collection(db, "orders"),
+        where("tab_status", "==", "open"),
+        where("table_number", "==", table)
+      );
+      const snap2 = await getDocs(q2);
+      return snap2.docs
+        .map((d) => normalizeTimestamp({ id: d.id, ...d.data() }))
+        .sort((a, b) => {
+          const aT = a.created_date ? new Date(a.created_date).getTime() : 0;
+          const bT = b.created_date ? new Date(b.created_date).getTime() : 0;
+          return aT - bT;
+        });
+    } catch {
+      return [];
+    }
+  }
+}
+
+/**
  * Subscreve pedidos em tempo real, ordenados por created_date desc.
  * Emite eventos individuais { type, id, data } para compatibilidade
  * com os componentes Admin.jsx e Staff.jsx que vieram da Base44.

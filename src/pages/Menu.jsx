@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
-import { Wine, AlertTriangle, Loader2 } from "lucide-react";
+import { Wine, AlertTriangle, Loader2, Receipt, X, Clock } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import CategoryTabs from "@/components/menu/CategoryTabs";
 import ProductCard from "@/components/menu/ProductCard";
 import CartDrawer from "@/components/menu/CartDrawer";
 import { useBarSettings } from "@/lib/BarSettingsContext";
-import { listAvailableProducts, getTableByMid } from "@/lib/db";
+import { listAvailableProducts, getTableByMid, listOpenOrdersByTable } from "@/lib/db";
 
 export default function Menu() {
   const [products, setProducts] = useState([]);
@@ -14,6 +14,7 @@ export default function Menu() {
   const [subcategory, setSubcategory] = useState("todos");
   const [cart, setCart] = useState({});
   const [showCart, setShowCart] = useState(false);
+  const [showAccount, setShowAccount] = useState(false);
   const [orderPlaced, setOrderPlaced] = useState(false);
 
   // === Validação da mesa via QR code seguro (?m=<id>) ===
@@ -299,14 +300,23 @@ export default function Menu() {
         )}
       </div>
 
-      {/* Cart Button */}
+      {/* Botão "A Minha Conta" — sempre visível no canto inferior direito */}
+      <button
+        onClick={() => setShowAccount(true)}
+        className="fixed bottom-6 right-5 z-30 w-14 h-14 rounded-full bg-card border border-primary/30 flex items-center justify-center shadow-xl hover:bg-secondary transition-colors"
+        title="Ver conta da mesa"
+      >
+        <Receipt className="w-6 h-6 text-primary" />
+      </button>
+
+      {/* Cart Button — deslocado para não sobrepor o botão da conta */}
       <AnimatePresence>
         {cartCount > 0 && (
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-6 left-5 right-5 z-30"
+            className="fixed bottom-6 left-5 right-20 z-30"
           >
             <button
               onClick={() => setShowCart(true)}
@@ -338,6 +348,196 @@ export default function Menu() {
           />
         )}
       </AnimatePresence>
+
+      {/* === Modal "A Minha Conta" === */}
+      <AnimatePresence>
+        {showAccount && (
+          <AccountModal
+            tableNumber={tableNumber}
+            onClose={() => setShowAccount(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+// -------------------------------------------------------------
+// Subcomponente: Modal "A Minha Conta"
+// Mostra todos os pedidos abertos da mesa com estados e total.
+// -------------------------------------------------------------
+function AccountModal({ tableNumber, onClose }) {
+  const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    listOpenOrdersByTable(tableNumber)
+      .then((data) => {
+        if (cancelled) return;
+        setOrders(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError("Não foi possível carregar a conta.");
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tableNumber]);
+
+  const totalAmount = orders.reduce(
+    (s, o) => s + (Number(o.total_amount) || 0),
+    0
+  );
+
+  const statusMeta = {
+    recebido: { label: "Recebido", color: "text-yellow-400 bg-yellow-500/15" },
+    pronto: { label: "Pronto", color: "text-blue-400 bg-blue-500/15" },
+    entregue: { label: "Entregue", color: "text-green-400 bg-green-500/15" },
+  };
+
+  function normalizeStatus(s) {
+    if (!s) return "recebido";
+    if (["pendente", "confirmado", "em_preparacao"].includes(s)) return "recebido";
+    if (s === "pago") return "entregue";
+    return s;
+  }
+
+  const formatTime = (iso) => {
+    if (!iso) return "";
+    return new Date(iso).toLocaleTimeString("pt-PT", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  return (
+    <>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/70 backdrop-blur-sm z-40"
+        onClick={onClose}
+      />
+      <motion.div
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "100%" }}
+        transition={{ type: "spring", damping: 28, stiffness: 300 }}
+        className="fixed bottom-0 left-0 right-0 z-50 bg-card rounded-t-3xl max-h-[85vh] flex flex-col border-t border-border"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between p-5 border-b border-border/50">
+          <div className="flex items-center gap-2">
+            <Receipt className="w-5 h-5 text-primary" />
+            <div>
+              <h2 className="font-playfair font-semibold text-lg">A Minha Conta</h2>
+              <p className="text-xs text-muted-foreground">Mesa {tableNumber}</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center"
+          >
+            <X className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+
+        {/* Conteúdo */}
+        <div className="overflow-y-auto flex-1 p-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 text-primary animate-spin" />
+            </div>
+          ) : error ? (
+            <p className="text-center text-sm text-red-400 py-8">{error}</p>
+          ) : orders.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Receipt className="w-12 h-12 mx-auto mb-3 opacity-20" />
+              <p className="text-sm">Ainda não fizeste nenhum pedido.</p>
+              <p className="text-xs mt-1 opacity-70">
+                Os pedidos aparecem aqui assim que forem enviados.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {orders.map((order) => {
+                const status = normalizeStatus(order.status);
+                const meta = statusMeta[status] || statusMeta.recebido;
+                return (
+                  <div
+                    key={order.id}
+                    className="bg-secondary/30 rounded-2xl p-4 space-y-2"
+                  >
+                    {/* Header do pedido */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-muted-foreground flex items-center gap-1">
+                        <Clock className="w-2.5 h-2.5" />
+                        {formatTime(order.created_date)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${meta.color}`}
+                      >
+                        {meta.label}
+                      </span>
+                    </div>
+                    {/* Itens */}
+                    {(order.items || []).map((item, i) => (
+                      <div
+                        key={i}
+                        className="flex justify-between text-sm"
+                      >
+                        <span className="text-foreground">
+                          <span className="text-primary font-semibold">
+                            {item.quantity}×
+                          </span>{" "}
+                          {item.product_name}
+                        </span>
+                        <span className="text-muted-foreground font-medium">
+                          €{Number(item.total).toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                    {/* Subtotal do pedido */}
+                    <div className="flex justify-between text-xs font-semibold pt-1 border-t border-border/30">
+                      <span className="text-muted-foreground">Subtotal</span>
+                      <span className="text-primary">
+                        €{Number(order.total_amount).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Total */}
+        {orders.length > 0 && (
+          <div className="p-5 border-t border-border/50 bg-secondary/30">
+            <div className="flex justify-between items-center">
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                  Total acumulado
+                </p>
+                <p className="font-bold text-primary text-2xl">
+                  €{totalAmount.toFixed(2)}
+                </p>
+              </div>
+              <p className="text-[10px] text-muted-foreground/60 text-right max-w-[140px]">
+                Os pedidos são preparados pela ordem de chegada.
+                O pagamento é feito na mesa ao staff.
+              </p>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </>
   );
 }
