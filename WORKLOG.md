@@ -1545,3 +1545,130 @@ UsersPanel possa reutilizá-lo na criação da app secundária.
 - A app secundária é apagada em cada chamada — não há pooling.
   Isto é aceitável porque a criação de utilizadores é uma operação
   rara (admin cria 1-5 contas no total).
+
+---
+
+## 2026-06-20 — Fix login role + Users ativos/inativos + Fluxo recebido→pronto→entregue + Merge
+
+**Problemas reportados**
+
+1. **Bug do login**: ao fazer login com `admin@sistema.pt` (que é
+   admin), o utilizador era redirecionado para `/staff` em vez de
+   `/admin`. Causa: `login()` no AuthContext devolvia
+   `cred.user` (do Firebase Auth) que NÃO tem `role` — a role só
+   é carregada depois pelo `onAuthStateChanged`. Logo
+   `user.role === "admin"` era sempre `undefined`.
+2. **Eliminação de utilizadores**: como não podemos apagar contas
+   Auth sem Cloud Functions (plano Spark), pediste para em vez
+   disso poder **desativar** utilizadores.
+3. **Fluxo de pedidos**: o fluxo antigo era
+   `pendente → confirmado → em_preparacao → pronto`. Pediste
+   `recebido → pronto → entregue` (3 estados claros).
+4. **Merge de pedidos**: se o cliente fizer novo pedido enquanto
+   o anterior ainda está "recebido", juntar ao anterior em vez
+   de criar novo doc.
+
+### 1. Bug do login — fix
+
+**`src/lib/AuthContext.jsx`** — `login()` reescrito:
+- Em vez de devolver `cred.user` imediatamente, devolve uma
+  Promise que só resolve DEPOIS de o `onAuthStateChanged` disparar
+  E o `getUserProfile` ler a role + active do Firestore.
+- Implementação: refs paralelos (`userRef`, `authErrorRef`)
+  atualizados em sync com o estado; polling a cada 100ms dentro
+  da Promise para detetar quando `user.role` está disponível ou
+  `authError` foi setado.
+- Timeout de 10s para evitar pendurar indefinidamente.
+- Rejeita com `err.type = "user_not_registered"` se sem perfil,
+  ou `err.type = "user_inactive"` se desativado.
+
+**`src/pages/Login.jsx`** — `handleSubmit` atualizado:
+- `await login(email, password)` agora retorna user COM role.
+- Redireciona: `user.role === "admin" ? "/admin" : "/staff"`.
+- Trata os novos erros `user_not_registered` e `user_inactive`
+  com mensagens PT-PT personalizadas.
+
+### 2. Users ativos/inativos
+
+**`src/lib/db.js`** — `setUserProfile` agora inclui campo `active`
+(default true). Nova função `setUserActive(uid, active)` para
+ativar/desativar sem reescrever o perfil todo.
+
+**`src/lib/AuthContext.jsx`** — `onAuthStateChanged` agora:
+- Lê `profile.active` do Firestore.
+- Se `active === false` → `signOut` automático + erro
+  `user_inactive` ("A tua conta está desativada. Contacta o
+  administrador do bar.").
+
+**`src/components/admin/UsersPanel.jsx`** — atualizado:
+- Import de `setUserActive` + ícones `Power`/`PowerOff`.
+- Novo `handleToggleActive(uid, email, currentActive)` com
+  confirmação. Não permite desativar a própria conta.
+- Cada linha da lista passa a ter DOIS botões:
+  - **Power/PowerOff** (toggle ativo/inativo) — verde se ativo,
+    cinzento se inativo.
+  - **Trash2** (apagar perfil Firestore — mantido para casos
+    extremos, com tooltip sobre eliminação manual em Firebase
+    Console).
+- Utilizadores inativos aparecem com opacity-50 + badge "inativo".
+
+### 3. Fluxo recebido → pronto → entregue
+
+**`src/lib/db.js → createOrder`** — novo status default `"recebido"`
+(em vez de `"pendente"`).
+
+**`src/components/admin/TableTab.jsx`** — reescrito por completo:
+- Cada pedido da mesa é mostrado individualmente (não só o
+  consolidado).
+- Cada pedido tem:
+  - Horário + badge de estado (recebido/pronto/entregue) com cor
+    correspondente (yellow/blue/green).
+  - Badge `+N` se foi merged (mostra `merge_count`).
+  - Lista de itens + notes.
+  - Botão **"Marcar como Pronto"** (se recebido) ou **"Marcar como
+    Entregue"** (se pronto).
+- Header do cartão mostra contagens por estado (ex: "2 recebidos,
+  1 pronto") para o staff ver rapidamente o que falta tratar.
+- Resumo consolidado no fundo (só se houver >1 pedido).
+- Compatibilidade: estados legacy (pendente/confirmado/em_preparacao)
+  são mapeados para "recebido" na UI.
+
+**`src/components/admin/OrderCard.jsx`** — reescrito:
+- Mesmo fluxo `recebido → pronto → entregue`.
+- Decrementa stock quando passa de "recebido" → "pronto".
+- Mostra badge `tab_status` (aberta/fechada) para o Admin distinguir.
+- Estado "entregue" aparece com opacity-60 + ícone ✓ Entregue.
+
+### 4. Merge de pedidos
+
+**`src/lib/db.js → createOrder`** — antes de criar novo doc, chama
+`tryMergeWithRecebidoOrder(tableStr, items, notes)`:
+
+- Query: `where tab_status == "open" + where table == X + where
+  status == "recebido"`. Fallback para `table_number` se legacy.
+- Se encontrar pedido "recebido" aberto da mesma mesa, faz merge:
+  - Para cada item novo, se `product_id` já existe no pedido →
+    soma quantidade e total.
+  - Se não existe → adiciona como novo item no array.
+  - Soma `total_amount`.
+  - Concatena `notes` com " | ".
+  - Incrementa `merge_count` (auditoria) + `last_merge_at`.
+- Se não encontrar (ou pedido anterior já está "pronto"/"entregue")
+  → cria novo documento normalmente.
+
+Isto significa que:
+- Cliente faz 1º pedido às 21:00 (status: recebido).
+- Cliente adiciona mais itens às 21:05 → MERGE no mesmo doc.
+- Staff marca como "Pronto" às 21:10.
+- Cliente adiciona mais itens às 21:15 → NOVO doc (porque o
+  anterior já está "pronto").
+- Cliente adiciona mais itens às 21:20 → MERGE no novo doc.
+
+**Estado final**
+
+- Build OK.
+- Login funciona: admin→/admin, staff→/staff, inativo→erro.
+- Users ativos/inativos com toggle no painel Admin.
+- Fluxo de pedidos: recebido → pronto → entregue com botões
+  visíveis em cada pedido no /staff.
+- Merge automático de pedidos "recebido" da mesma mesa.

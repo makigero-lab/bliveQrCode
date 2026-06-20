@@ -4,6 +4,7 @@ import React, {
   useEffect,
   useState,
   useCallback,
+  useRef,
 } from "react";
 import {
   onAuthStateChanged,
@@ -53,6 +54,20 @@ export const AuthProvider = ({ children }) => {
   const [authChecked, setAuthChecked] = useState(false);
   const [authError, setAuthError] = useState(null);
 
+  // Refs paralelos ao estado — usados pelo `login()` para aceder
+  // ao valor mais recente de user/authError dentro da Promise
+  // (sem stale closure). São atualizados em sync com o estado.
+  const userRef = useRef(null);
+  const authErrorRef = useRef(null);
+
+  // Sempre que user/authError mudam, atualizamos os refs.
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+  useEffect(() => {
+    authErrorRef.current = authError;
+  }, [authError]);
+
   // onAuthStateChanged: dispara uma vez na carga (mesmo que não
   // haja sessão) e depois sempre que há login/logout.
   useEffect(() => {
@@ -68,7 +83,7 @@ export const AuthProvider = ({ children }) => {
         return;
       }
 
-      // Há sessão Firebase Auth — ler perfil (role) no Firestore
+      // Há sessão Firebase Auth — ler perfil (role + active) no Firestore
       console.info(`[Auth] Sessão ativa: ${firebaseUser.email}. A ler perfil...`);
       try {
         const profile = await getUserProfile(firebaseUser.uid);
@@ -91,13 +106,33 @@ export const AuthProvider = ({ children }) => {
           return;
         }
 
+        // Verifica se o utilizador está ativo. Se `active === false`,
+        // o admin desativou-o — login é rejeitado.
+        if (profile.active === false) {
+          console.warn(
+            `[Auth] Utilizador ${firebaseUser.email} está desativado (active=false). A fazer signOut.`
+          );
+          await signOut(auth);
+          setUser(null);
+          setIsAuthenticated(false);
+          setAuthError({
+            type: "user_inactive",
+            message:
+              "A tua conta está desativada. Contacta o administrador do bar.",
+          });
+          setAuthChecked(true);
+          setIsLoadingAuth(false);
+          return;
+        }
+
         console.info(
-          `[Auth] Perfil carregado: role=${profile.role}, email=${profile.email}.`
+          `[Auth] Perfil carregado: role=${profile.role}, email=${profile.email}, active=${profile.active}.`
         );
         setUser({
           uid: firebaseUser.uid,
           email: profile.email || firebaseUser.email,
           role: profile.role || "staff",
+          active: profile.active !== false,
         });
         setIsAuthenticated(true);
         setAuthError(null);
@@ -128,22 +163,85 @@ export const AuthProvider = ({ children }) => {
 
   /**
    * Faz login com email/password.
+   *
+   * Retorna uma Promise que só resolve DEPOIS de o onAuthStateChanged
+   * disparar E o perfil (role, active) ser lido do Firestore. Isto
+   * garante que quem chama `login()` recebe um user COM `role`
+   * (não apenas o FirebaseUser básico) e pode redirecionar para a
+   * rota certa (/admin vs /staff).
+   *
+   * Se o user estiver desativado (active=false) ou sem perfil, o
+   * onAuthStateChanged faz signOut automático e o `login()` rejeita
+   * com o erro correspondente.
+   *
    * @param {string} email
    * @param {string} password
+   * @returns {Promise<{uid, email, role, active}>}
    * @throws {Error} com `code` do Firebase Auth (ex: "auth/invalid-credential")
+   *                ou com `type` ("user_not_registered" | "user_inactive")
    */
-  const login = useCallback(async (email, password) => {
+  const login = useCallback((email, password) => {
     setAuthError(null);
     setIsLoadingAuth(true);
-    try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      // onAuthStateChanged vai disparar e preencher o estado.
-      return cred.user;
-    } catch (err) {
-      console.error("[Auth] Erro no login:", err);
-      setIsLoadingAuth(false);
-      throw err;
-    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+
+      // Limpa os refs antes de começar para evitar detetar state
+      // de uma sessão anterior.
+      userRef.current = null;
+      authErrorRef.current = null;
+
+      // Timeout de 10s para não pendurar indefinidamente.
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error("Timeout ao fazer login. Tenta novamente."));
+        setIsLoadingAuth(false);
+      }, 10000);
+
+      // Polling dos refs (atualizados em sync com o estado pelo
+      // useEffect acima). A cada 100ms verifica se o user já tem
+      // role (sucesso) ou se authError foi setado (falha).
+      const checkInterval = setInterval(() => {
+        if (settled) return;
+
+        const err = authErrorRef.current;
+        const u = userRef.current;
+
+        // Caso 1: login rejeitado pelo onAuthStateChanged.
+        if (err && err.type) {
+          settled = true;
+          clearInterval(checkInterval);
+          clearTimeout(timeout);
+          setIsLoadingAuth(false);
+          const e = new Error(err.message);
+          e.type = err.type;
+          reject(e);
+          return;
+        }
+
+        // Caso 2: login OK — user com role disponível.
+        if (u && u.role) {
+          settled = true;
+          clearInterval(checkInterval);
+          clearTimeout(timeout);
+          setIsLoadingAuth(false);
+          resolve(u);
+        }
+      }, 100);
+
+      // Inicia o signIn — o onAuthStateChanged vai disparar e
+      // preencher o estado (user ou authError).
+      signInWithEmailAndPassword(auth, email, password).catch((err) => {
+        if (settled) return;
+        settled = true;
+        clearInterval(checkInterval);
+        clearTimeout(timeout);
+        setIsLoadingAuth(false);
+        reject(err);
+      });
+    });
   }, []);
 
   const logout = useCallback(async () => {

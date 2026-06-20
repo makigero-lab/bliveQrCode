@@ -159,6 +159,23 @@ export async function createOrder(data) {
   // por retrocompatibilidade com Admin.jsx / OrderCard.jsx / pedidos antigos.
   const tableStr = String(data.table || data.table_number || "1");
 
+  // === Lógica de merge ===
+  // Se o pedido anterior dessa mesa ainda estiver em estado "recebido"
+  // (ainda não foi tratado pelo staff), JUNTAMOS os novos itens a esse
+  // pedido em vez de criar um novo. Isto evita ter 3 pedidos
+  // "recebido" separados da mesma mesa só porque o cliente adicionou
+  // items em 3 cliques seguidos.
+  //
+  // Se o pedido anterior já estiver em "pronto" ou "entregue", criamos
+  // um novo documento — o cliente está a fazer um pedido "extra".
+  const mergeResult = await tryMergeWithRecebidoOrder(tableStr, data.items, data.notes);
+
+  if (mergeResult.merged) {
+    console.info(`[db] Pedido merged com ${mergeResult.id} (mesa ${tableStr}).`);
+    return mergeResult.order;
+  }
+
+  // Não fez merge — cria pedido novo
   const payload = {
     // Campos obrigatórios do modelo
     table: tableStr,
@@ -171,15 +188,16 @@ export async function createOrder(data) {
       total: Number(i.total) || 0,
     })),
     total_amount: Number(data.total_amount) || 0,
-    status: data.status || "pendente",
+    // NOVO fluxo de estados:
+    //   recebido → pronto → entregue
+    // (mantemos "pendente" como alias legacy para pedidos antigos)
+    status: "recebido",
     // Estado da conta (open = mesa aberta; closed = mesa fechada/paga)
     tab_status: data.tab_status || "open",
     // Campos opcionais
     notes: data.notes || null,
     // Timestamps — usa Date nativo (serializado como ISO string) para
     // ordenação lexicográfica estável em `orderBy("created_date","desc")`.
-    // NOTA: não usamos serverTimestamp() porque queremos consistência
-    // entre created_date (escrita) e o que chega ao onSnapshot (leitura).
     created_date: isoNow,
     updated_date: isoNow,
     closed_at: null, // preenchido quando tab_status muda para "closed"
@@ -189,6 +207,117 @@ export async function createOrder(data) {
 
   const ref = await addDoc(collection(db, "orders"), payload);
   return { id: ref.id, ...payload };
+}
+
+/**
+ * Procura um pedido "recebido" aberto (tab_status=open, status=recebido)
+ * da mesa indicada. Se existir, faz merge dos novos itens:
+ *   - Para cada item novo, se já existe um com o mesmo product_id,
+ *     soma as quantidades e o total.
+ *   - Se não existe, adiciona como novo item no array.
+ *   - Soma o total_amount.
+ *   - Se houver notes novas, concatena com as existentes.
+ *
+ * @param {string} tableStr
+ * @param {Array} newItems
+ * @param {string|null} newNotes
+ * @returns {Promise<{merged: boolean, id?: string, order?: object}>}
+ */
+async function tryMergeWithRecebidoOrder(tableStr, newItems, newNotes) {
+  try {
+    // Procura pedidos recebidos abertos da mesa
+    const q = query(
+      collection(db, "orders"),
+      where("tab_status", "==", "open"),
+      where("table", "==", tableStr),
+      where("status", "==", "recebido")
+    );
+    const snap = await getDocs(q);
+
+    if (snap.empty) {
+      // Fallback: pedidos legacy sem `table` (usam table_number)
+      const q2 = query(
+        collection(db, "orders"),
+        where("tab_status", "==", "open"),
+        where("table_number", "==", tableStr),
+        where("status", "==", "recebido")
+      );
+      const snap2 = await getDocs(q2);
+      if (snap2.empty) return { merged: false };
+      return _doMerge(snap2.docs[0], newItems, newNotes);
+    }
+
+    // Faz merge com o primeiro pedido "recebido" encontrado
+    // (se houver vários, é anomalia — mas faz merge com o mais antigo)
+    return _doMerge(snap.docs[0], newItems, newNotes);
+  } catch (err) {
+    console.warn("[db] tryMergeWithRecebidoOrder falhou (cria novo):", err.message);
+    return { merged: false };
+  }
+}
+
+async function _doMerge(orderDoc, newItems, newNotes) {
+  const existing = normalizeTimestamp({
+    id: orderDoc.id,
+    ...orderDoc.data(),
+  });
+  const existingItems = Array.isArray(existing.items) ? existing.items : [];
+
+  // Faz merge dos itens: soma quantidades se product_id já existe
+  const mergedItems = [...existingItems];
+  for (const newItem of newItems) {
+    const idx = mergedItems.findIndex(
+      (i) => i.product_id === newItem.product_id
+    );
+    if (idx >= 0) {
+      mergedItems[idx] = {
+        ...mergedItems[idx],
+        quantity: (Number(mergedItems[idx].quantity) || 0) + (Number(newItem.quantity) || 0),
+        total:
+          (Number(mergedItems[idx].total) || 0) + (Number(newItem.total) || 0),
+      };
+    } else {
+      mergedItems.push({
+        product_id: String(newItem.product_id || ""),
+        product_name: String(newItem.product_name || ""),
+        quantity: Number(newItem.quantity) || 1,
+        unit_price: Number(newItem.unit_price) || 0,
+        total: Number(newItem.total) || 0,
+      });
+    }
+  }
+
+  // Soma total
+  const newTotalAmount =
+    (Number(existing.total_amount) || 0) +
+    newItems.reduce((s, i) => s + (Number(i.total) || 0), 0);
+
+  // Concatena notes (se ambas existirem)
+  let mergedNotes = existing.notes || null;
+  if (newNotes) {
+    mergedNotes = mergedNotes
+      ? `${mergedNotes} | ${newNotes}`
+      : newNotes;
+  }
+
+  const now = new Date().toISOString();
+  const patch = {
+    items: mergedItems,
+    total_amount: newTotalAmount,
+    notes: mergedNotes,
+    updated_date: now,
+    // Registra quantos merges foram feitos (auditoria)
+    merge_count: (Number(existing.merge_count) || 0) + 1,
+    last_merge_at: now,
+  };
+
+  await updateDoc(orderDoc.ref, patch);
+
+  return {
+    merged: true,
+    id: orderDoc.id,
+    order: { ...existing, ...patch },
+  };
 }
 
 export async function updateOrder(id, patch) {
@@ -795,18 +924,43 @@ export async function getUserProfile(uid) {
  * Usado pelo UsersPanel quando o admin cria um novo utilizador.
  *
  * @param {string} uid — uid do Firebase Auth (criado via createUserWithEmailAndPassword)
- * @param {{email: string, role: "admin"|"staff"}} data
+ * @param {{email: string, role: "admin"|"staff", active?: boolean}} data
  */
 export async function setUserProfile(uid, data) {
   const now = new Date().toISOString();
   const payload = {
     email: String(data.email || ""),
     role: data.role === "admin" ? "admin" : "staff",
+    // `active` default true — se for false, login é rejeitado pelo
+    // AuthContext (mesmo que a conta Auth exista). Isto permite
+    // "desativar" um utilizador sem precisar de o apagar do Auth.
+    active: data.active !== false,
     created_date: now,
     updated_date: now,
   };
   await setDoc(doc(db, USERS_COL, String(uid)), payload, { merge: true });
   return { uid, ...payload };
+}
+
+/**
+ * Ativa ou desativa o perfil de um utilizador.
+ * Quando `active=false`, o login é rejeitado no AuthContext
+ * (mesmo que a conta Firebase Auth continue a existir).
+ *
+ * @param {string} uid
+ * @param {boolean} active
+ */
+export async function setUserActive(uid, active) {
+  const ref = doc(db, USERS_COL, String(uid));
+  await setDoc(
+    ref,
+    {
+      active: Boolean(active),
+      updated_date: new Date().toISOString(),
+    },
+    { merge: true }
+  );
+  return { uid, active: Boolean(active) };
 }
 
 /**

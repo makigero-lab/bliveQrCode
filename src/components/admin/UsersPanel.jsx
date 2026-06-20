@@ -33,12 +33,15 @@ import {
   AlertTriangle,
   Crown,
   Info,
+  Power,
+  PowerOff,
 } from "lucide-react";
 import { useAuth } from "@/lib/AuthContext";
 import {
   subscribeUsers,
   deleteUserProfile,
   setUserProfile,
+  setUserActive,
 } from "@/lib/db";
 import { initializeApp, deleteApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword, signOut } from "firebase/auth";
@@ -194,6 +197,36 @@ export default function UsersPanel() {
     } catch (err) {
       console.error("[UsersPanel] Erro ao apagar:", err);
       alert(`Erro ao apagar: ${err?.message || ""}`);
+    }
+  };
+
+  // === Ativar / Desativar utilizador ===
+  // Em vez de apagar (que deixava conta Auth órfã), o admin pode
+  // desativar: o user continua na coleção users mas `active=false`
+  // → login é rejeitado pelo AuthContext com "Conta desativada".
+  const handleToggleActive = async (uid, emailToToggle, currentActive) => {
+    if (uid === currentUser?.uid) {
+      alert("Não podes desativar a tua própria conta.");
+      return;
+    }
+
+    const newActive = !currentActive;
+    const action = newActive ? "ativar" : "desativar";
+
+    if (!window.confirm(
+      `${newActive ? "Ativar" : "Desativar"} o utilizador ${emailToToggle}?\n\n` +
+      (newActive
+        ? "O utilizador volta a conseguir fazer login normalmente."
+        : "O utilizador deixa de conseguir fazer login (mas a sua conta Auth não é apagada).")
+    )) return;
+
+    try {
+      await setUserActive(uid, newActive);
+      console.info(`[UsersPanel] User ${emailToToggle} ${action}do (active=${newActive}).`);
+      // subscribeUsers atualiza a lista automaticamente.
+    } catch (err) {
+      console.error(`[UsersPanel] Erro ao ${action}:`, err);
+      alert(`Erro ao ${action}: ${err?.message || ""}`);
     }
   };
 
@@ -383,12 +416,14 @@ export default function UsersPanel() {
           {users.map((u) => {
             const isMe = u.uid === currentUser?.uid;
             const isAdmin = u.role === "admin";
+            // `active` default true se for undefined (compat com perfis antigos)
+            const isActive = u.active !== false;
 
             return (
               <div
                 key={u.uid}
-                className={`bg-card border rounded-2xl p-4 flex items-center gap-3 ${
-                  isAdmin ? "border-primary/30" : "border-border/50"
+                className={`bg-card border rounded-2xl p-4 flex items-center gap-3 transition-opacity ${
+                  !isActive ? "opacity-50 border-border/30" : isAdmin ? "border-primary/30" : "border-border/50"
                 }`}
               >
                 {/* Avatar */}
@@ -415,6 +450,11 @@ export default function UsersPanel() {
                         tu
                       </span>
                     )}
+                    {!isActive && (
+                      <span className="text-[10px] bg-red-500/15 text-red-400 px-1.5 py-0.5 rounded-md font-medium">
+                        inativo
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span
@@ -432,33 +472,55 @@ export default function UsersPanel() {
                   </div>
                 </div>
 
-                {/* Ações — com tooltip sobre eliminação manual */}
-                <div className="relative group flex-shrink-0">
+                {/* Ações: toggle ativo + delete (com tooltip) */}
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  {/* Botão Ativar/Desativar */}
                   <button
-                    onClick={() => handleDelete(u.uid, u.email, u.role)}
+                    onClick={() => handleToggleActive(u.uid, u.email, isActive)}
                     disabled={isMe}
-                    title={isMe ? "Não podes apagar a tua própria conta" : "Apagar perfil (Firestore)"}
-                    className="w-9 h-9 rounded-xl bg-destructive/10 flex items-center justify-center hover:bg-destructive/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    title={
+                      isMe
+                        ? "Não podes desativar a tua própria conta"
+                        : isActive
+                        ? "Desativar utilizador (login é bloqueado)"
+                        : "Ativar utilizador (login é permitido)"
+                    }
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                      isActive
+                        ? "bg-green-500/10 text-green-400 hover:bg-red-500/15 hover:text-red-400"
+                        : "bg-secondary text-muted-foreground hover:bg-green-500/15 hover:text-green-400"
+                    }`}
                   >
-                    <Trash2 className="w-4 h-4 text-destructive" />
+                    {isActive ? <Power className="w-4 h-4" /> : <PowerOff className="w-4 h-4" />}
                   </button>
-                  {/* Tooltip — aparece no hover quando NÃO é o próprio user */}
-                  {!isMe && (
-                    <div className="absolute right-0 top-full mt-1 w-56 bg-card border border-border rounded-xl px-3 py-2 text-[10px] text-muted-foreground shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                      <Info className="w-3 h-3 inline mr-1 text-primary" />
-                      <strong className="text-foreground">Nota:</strong> a conta
-                      de acesso tem de ser removida permanentemente em{" "}
-                      <a
-                        href="https://console.firebase.google.com/project/autocell-535c2/authentication/users"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary underline"
-                      >
-                        Firebase Console → Authentication
-                      </a>
-                      .
-                    </div>
-                  )}
+
+                  {/* Botão Delete + tooltip */}
+                  <div className="relative group">
+                    <button
+                      onClick={() => handleDelete(u.uid, u.email, u.role)}
+                      disabled={isMe}
+                      title={isMe ? "Não podes apagar a tua própria conta" : "Apagar perfil (Firestore)"}
+                      className="w-9 h-9 rounded-xl bg-destructive/10 flex items-center justify-center hover:bg-destructive/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 className="w-4 h-4 text-destructive" />
+                    </button>
+                    {!isMe && (
+                      <div className="absolute right-0 top-full mt-1 w-56 bg-card border border-border rounded-xl px-3 py-2 text-[10px] text-muted-foreground shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                        <Info className="w-3 h-3 inline mr-1 text-primary" />
+                        <strong className="text-foreground">Nota:</strong> a conta
+                        de acesso tem de ser removida permanentemente em{" "}
+                        <a
+                          href="https://console.firebase.google.com/project/autocell-535c2/authentication/users"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-primary underline"
+                        >
+                          Firebase Console → Authentication
+                        </a>
+                        .
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             );

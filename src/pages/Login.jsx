@@ -53,16 +53,38 @@ export default function Login() {
     setError("");
 
     try {
+      // `login()` agora retorna o user COM role (espera pelo
+      // onAuthStateChanged + getUserProfile). Já pode redirecionar
+      // para a rota certa sem depender de state externo.
       const user = await login(email, password);
       console.info("[Login] Sucesso:", user.email, "role:", user.role);
-      // onAuthStateChanged já preencheu o contexto. Redireciona:
-      // O useEffect abaixo faz isto automaticamente quando o user
-      // fica disponível, mas damos um atalho aqui para UX.
+
+      // Redireciona conforme a role:
+      // - admin → /admin
+      // - staff → /staff
+      // (qualquer outra role → /staff por defeito)
       const target = user.role === "admin" ? "/admin" : "/staff";
       navigate(target, { replace: true });
     } catch (err) {
       console.error("[Login] Erro:", err);
-      setError(translateFirebaseError(err?.code) || err?.message || "Erro desconhecido.");
+
+      // Erros personalizados do AuthContext (não Firebase Auth)
+      if (err?.type === "user_not_registered") {
+        setError(
+          "A tua conta não tem perfil associado. Contacta o administrador do bar."
+        );
+      } else if (err?.type === "user_inactive") {
+        setError(
+          "A tua conta está desativada. Contacta o administrador do bar."
+        );
+      } else {
+        // Erros do Firebase Auth (auth/invalid-credential, etc.)
+        setError(
+          translateFirebaseError(err?.code) ||
+            err?.message ||
+            "Erro desconhecido."
+        );
+      }
     } finally {
       setLoading(false);
     }
