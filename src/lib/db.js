@@ -358,6 +358,125 @@ export async function deleteOrder(id) {
 }
 
 /**
+ * Anula (estorna) um item individual de um pedido.
+ *
+ * Em vez de apagar o item do array, MOVE-o para `canceled_items`
+ * (registo de auditoria) e ajusta o `total_amount` do pedido.
+ *
+ * Se todos os itens forem anulados, o pedido fica com
+ * `status: "cancelado"` (desaparece da vista do barman mas
+ * mantém-se na base de dados para auditoria).
+ *
+ * @param {string} orderId — id do documento na coleção orders
+ * @param {number} itemIndex — índice do item no array `items`
+ * @param {object} staffUser — { uid, email } do staff que anulou
+ * @returns {Promise<{orderId, canceledItem, newTotal, orderStatus}>}
+ */
+export async function cancelOrderItem(orderId, itemIndex, staffUser) {
+  const ref = doc(db, "orders", orderId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("Pedido não encontrado.");
+
+  const order = normalizeTimestamp({ id: snap.id, ...snap.data() });
+  const items = Array.isArray(order.items) ? order.items : [];
+  const canceledItems = Array.isArray(order.canceled_items) ? order.canceled_items : [];
+
+  if (itemIndex < 0 || itemIndex >= items.length) {
+    throw new Error("Índice de item inválido.");
+  }
+
+  const itemToCancel = items[itemIndex];
+  const itemTotal = Number(itemToCancel.total) || 0;
+  const now = new Date().toISOString();
+
+  // Move o item para canceled_items com auditoria
+  canceledItems.push({
+    ...itemToCancel,
+    canceled_at: now,
+    canceled_by_uid: staffUser?.uid || null,
+    canceled_by_email: staffUser?.email || null,
+  });
+
+  // Remove do array de items ativos
+  items.splice(itemIndex, 1);
+
+  // Recalcula total
+  const newTotal = items.reduce(
+    (s, i) => s + (Number(i.total) || 0),
+    0
+  );
+
+  // Se não há mais itens ativos, marca o pedido como cancelado
+  const newStatus = items.length === 0 ? "cancelado" : order.status || "recebido";
+
+  const patch = {
+    items,
+    canceled_items: canceledItems,
+    total_amount: newTotal,
+    status: newStatus,
+    updated_date: now,
+  };
+
+  await updateDoc(ref, patch);
+
+  return {
+    orderId,
+    canceledItem: itemToCancel,
+    newTotal,
+    orderStatus: newStatus,
+  };
+}
+
+/**
+ * Lista todos os pedidos com itens cancelados para a vista de
+ * Auditoria do Admin. Procura por documentos que tenham o campo
+ * `canceled_items` não vazio.
+ *
+ * @param {number} [limitCount=200]
+ * @returns {Promise<Array>}
+ */
+export async function listCancellations(limitCount = 200) {
+  try {
+    const q = query(
+      collection(db, "orders"),
+      where("canceled_items", "!=", null),
+      limit(limitCount)
+    );
+    const snap = await getDocs(q);
+    const items = snap.docs
+      .map((d) => normalizeTimestamp({ id: d.id, ...d.data() }))
+      .filter((o) => Array.isArray(o.canceled_items) && o.canceled_items.length > 0)
+      .sort((a, b) => {
+        // Ordena pelo canceled_at mais recente
+        const aLast = a.canceled_items?.[a.canceled_items.length - 1]?.canceled_at;
+        const bLast = b.canceled_items?.[b.canceled_items.length - 1]?.canceled_at;
+        const aT = aLast ? new Date(aLast).getTime() : 0;
+        const bT = bLast ? new Date(bLast).getTime() : 0;
+        return bT - aT;
+      });
+    return items;
+  } catch (err) {
+    // Fallback: sem o where (pode falhar se não houver índice)
+    try {
+      const snap2 = await getDocs(collection(db, "orders"));
+      return snap2.docs
+        .map((d) => normalizeTimestamp({ id: d.id, ...d.data() }))
+        .filter((o) => Array.isArray(o.canceled_items) && o.canceled_items.length > 0)
+        .sort((a, b) => {
+          const aLast = a.canceled_items?.[a.canceled_items.length - 1]?.canceled_at;
+          const bLast = b.canceled_items?.[b.canceled_items.length - 1]?.canceled_at;
+          const aT = aLast ? new Date(aLast).getTime() : 0;
+          const bT = bLast ? new Date(bLast).getTime() : 0;
+          return bT - aT;
+        })
+        .slice(0, limitCount);
+    } catch {
+      return [];
+    }
+  }
+}
+
+/**
  * Lista todos os pedidos abertos (tab_status="open") de uma mesa
  * específica. Usado pelo ecrã "A Minha Conta" no Menu do cliente.
  *

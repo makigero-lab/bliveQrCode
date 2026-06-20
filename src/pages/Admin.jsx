@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { Plus, RefreshCw, LayoutGrid, ClipboardList, QrCode, Trash2, Pencil, Wine, BarChart2, Settings, Wifi, PackageOpen, LineChart, Users, LogOut, Lock } from "lucide-react";
+import { Plus, RefreshCw, LayoutGrid, ClipboardList, QrCode, Trash2, Pencil, Wine, BarChart2, Settings, Wifi, PackageOpen, LineChart, Users, LogOut, Lock, AlertTriangle } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import OrderCard from "@/components/admin/OrderCard";
 import ProductForm from "@/components/admin/ProductForm";
@@ -11,6 +11,7 @@ import AnalyticsPanel from "@/components/admin/AnalyticsPanel";
 import ClearAllOrdersButton from "@/components/admin/ClearAllOrdersButton";
 import BulkProductEditor from "@/components/admin/BulkProductEditor";
 import UsersPanel from "@/components/admin/UsersPanel";
+import CancellationsPanel from "@/components/admin/CancellationsPanel";
 import TableTab from "@/components/admin/TableTab";
 import POSModal from "@/components/admin/POSModal";
 import { useBarSettings } from "@/lib/BarSettingsContext";
@@ -35,6 +36,7 @@ const ALL_TABS = [
   { id: "qr", label: "QR", icon: QrCode, adminOnly: true },
   { id: "settings", label: "Config.", icon: Settings, adminOnly: true },
   { id: "users", label: "Utilizadores", icon: Users, adminOnly: true },
+  { id: "cancellations", label: "Cancelamentos", icon: AlertTriangle, adminOnly: true },
 ];
 
 const statusOrder = ["pendente", "confirmado", "em_preparacao", "pronto", "pago"];
@@ -461,6 +463,9 @@ export default function Admin() {
 
         {/* USERS TAB — só visível para admin (filtro em `tabs` acima) */}
         {tab === "users" && <UsersPanel />}
+
+        {/* CANCELLATIONS TAB — auditoria de itens anulados */}
+        {tab === "cancellations" && <CancellationsPanel />}
       </div>
 
       <AnimatePresence>

@@ -6,10 +6,9 @@ import {
   Receipt,
   XCircle,
 } from "lucide-react";
-import { deleteOrder } from "@/lib/db";
+import { cancelOrderItem } from "@/lib/db";
+import { useAuth } from "@/lib/AuthContext";
 
-// Configuração visual do indicador de tab_status (conta aberta vs fechada)
-// Este é o destaque principal do cartão — aparece numa faixa no topo.
 const tabStatusMeta = {
   open: {
     label: "Mesa Ativa · Aberta",
@@ -25,18 +24,34 @@ const tabStatusMeta = {
   },
 };
 
-// Normaliza tab_status: pedidos sem o campo são tratados como "open"
 function normalizeTabStatus(s) {
   if (!s) return "open";
   return s === "closed" ? "closed" : "open";
 }
 
 export default function OrderCard({ order }) {
-  // Indicador de conta (tab_status)
+  const { user } = useAuth();
   const tabStatus = normalizeTabStatus(order.tab_status);
   const tabMeta = tabStatusMeta[tabStatus];
   const TabIcon = tabMeta.icon;
   const isClosed = tabStatus === "closed";
+  const isOpen = !isClosed;
+
+  const handleCancelItem = async (e, itemIndex, item) => {
+    e.stopPropagation();
+    const confirm = window.confirm(
+      `Anular este item?\n\n` +
+        `${item.quantity}× ${item.product_name} · €${Number(item.total).toFixed(2)}\n\n` +
+        `O valor será subtraído do total.\n` +
+        `A anulação fica registada para auditoria.`
+    );
+    if (!confirm) return;
+    try {
+      await cancelOrderItem(order.id, itemIndex, user);
+    } catch (err) {
+      alert(`Erro: ${err?.message || ""}`);
+    }
+  };
 
   return (
     <motion.div
@@ -47,7 +62,7 @@ export default function OrderCard({ order }) {
         isClosed ? "opacity-70" : ""
       }`}
     >
-      {/* === Faixa de destaque: tab_status === */}
+      {/* Faixa tab_status */}
       <div
         className={`flex items-center justify-between px-4 py-1.5 border-b border-border/40 ${tabMeta.className}`}
       >
@@ -61,17 +76,16 @@ export default function OrderCard({ order }) {
         </span>
       </div>
 
-      {/* === Cabeçalho: mesa + hora === */}
+      {/* Cabeçalho: mesa + hora */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border/40">
         <div className="flex items-center gap-2">
           <p className="font-playfair font-bold text-base">
             Mesa {order.table_number || order.table}
           </p>
-          {/* Badge de merge */}
           {Number(order.merge_count) > 0 && (
             <span
               className="text-[10px] bg-primary/15 text-primary px-1.5 py-0.5 rounded-md font-medium"
-              title={`Pedido atualizado ${order.merge_count}× com novos itens`}
+              title={`Pedido atualizado ${order.merge_count}×`}
             >
               +{order.merge_count}
             </span>
@@ -87,22 +101,51 @@ export default function OrderCard({ order }) {
         </p>
       </div>
 
-      {/* === Itens === */}
+      {/* Itens — com botão X para anulação individual (só se aberto) */}
       <div className="px-4 py-3 space-y-1.5">
         {order.items?.map((item, i) => (
-          <div key={i} className="flex justify-between text-sm">
-            <span className="text-foreground">
-              <span className="text-primary font-semibold">{item.quantity}×</span>{" "}
-              {item.product_name}
+          <div key={i} className="flex justify-between text-sm items-center">
+            <span className="text-foreground flex items-center gap-1.5 min-w-0 flex-1">
+              <span className="text-primary font-semibold">{item.quantity}×</span>
+              <span className="truncate">{item.product_name}</span>
             </span>
-            <span className="text-muted-foreground font-medium">
-              €{item.total?.toFixed(2)}
-            </span>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <span className="text-muted-foreground font-medium">
+                €{item.total?.toFixed(2)}
+              </span>
+              {isOpen && (
+                <button
+                  onClick={(e) => handleCancelItem(e, i, item)}
+                  title={`Anular ${item.product_name}`}
+                  className="w-6 h-6 rounded-md bg-red-500/10 flex items-center justify-center hover:bg-red-500/25 active:scale-90 transition-all"
+                >
+                  <XCircle className="w-3.5 h-3.5 text-red-400" />
+                </button>
+              )}
+            </div>
           </div>
         ))}
+        {/* Itens cancelados (auditoria visível) */}
+        {order.canceled_items?.length > 0 && (
+          <div className="mt-2 pt-2 border-t border-border/30 space-y-1">
+            <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider">
+              Itens anulados ({order.canceled_items.length})
+            </p>
+            {order.canceled_items.map((ci, i) => (
+              <div key={i} className="flex justify-between text-xs items-center opacity-50 line-through">
+                <span className="text-muted-foreground">
+                  {ci.quantity}× {ci.product_name}
+                </span>
+                <span className="text-muted-foreground">
+                  €{Number(ci.total).toFixed(2)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* === Notas === */}
+      {/* Notas */}
       {order.notes && (
         <div className="mx-4 mb-3 bg-yellow-500/10 border border-yellow-500/30 rounded-xl px-3 py-2 flex items-start gap-2">
           <MessageSquare className="w-3.5 h-3.5 text-yellow-400 flex-shrink-0 mt-0.5" />
@@ -110,37 +153,17 @@ export default function OrderCard({ order }) {
         </div>
       )}
 
-      {/* === Rodapé: total + cancelar === */}
+      {/* Rodapé: total */}
       <div className="flex items-center justify-between px-4 py-3 bg-secondary/30 border-t border-border/30">
         <p className="font-bold text-primary text-base">
           €{order.total_amount?.toFixed(2)}
         </p>
-        <div className="flex items-center gap-2">
-          {isClosed && (
-            <span className="text-muted-foreground text-sm font-semibold flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Fechada
-            </span>
-          )}
-          {!isClosed && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                if (window.confirm(
-                  `Anular este pedido?\n\n` +
-                    `${(order.items || []).length} item(s) · €${Number(order.total_amount || 0).toFixed(2)}\n\n` +
-                    `O pedido será removido permanentemente.`
-                )) {
-                  deleteOrder(order.id);
-                }
-              }}
-              title="Anular pedido"
-              className="w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center hover:bg-red-500/20 transition-colors"
-            >
-              <XCircle className="w-4 h-4 text-red-400" />
-            </button>
-          )}
-        </div>
+        {isClosed && (
+          <span className="text-muted-foreground text-sm font-semibold flex items-center gap-1">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            Fechada
+          </span>
+        )}
       </div>
     </motion.div>
   );
