@@ -1,14 +1,14 @@
 // src/components/admin/ClearAllOrdersButton.jsx
 // -------------------------------------------------------------
-// Botão "Apagar todos os pedidos" para o painel de Admin
+// Botão "Limpar Mesas Esquecidas (Abertas)" para o painel de Admin
 // (separador Pedidos).
 //
-// Lê todos os documentos da coleção `orders` no Firestore e
-// apaga-os em lotes de 400 via `writeBatch`. Útil para limpar
-// dados antigos.
+// Apaga EXCLUSIVAMENTE os documentos da coleção `orders` que tenham
+// tab_status: 'open'. O histórico de contas fechadas (tab_status:
+// 'closed') NÃO é afetado — preserva os dados para contabilidade.
 //
-// Espelho visual do `ClearAllProductsButton` mas para a coleção
-// `orders`. Dupla confirmação (dialog + prompt "APAGAR").
+// Útil no final do turno para limpar mesas que ficaram abertas
+// por engano (cliente saiu sem pagar, staff esqueceu de fechar).
 // -------------------------------------------------------------
 
 import { useState, useRef } from "react";
@@ -22,11 +22,13 @@ import {
   collection,
   writeBatch,
   getDocs,
+  query,
+  where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 export default function ClearAllOrdersButton({ onCleared }) {
-  const [status, setStatus] = useState("idle"); // idle | deleting | done | error
+  const [status, setStatus] = useState("idle");
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [message, setMessage] = useState("");
   const cancelRef = useRef(false);
@@ -34,20 +36,15 @@ export default function ClearAllOrdersButton({ onCleared }) {
   const handleClear = async () => {
     if (status === "deleting") return;
 
-    // Dupla confirmação: primeira janela
     const firstConfirm = window.confirm(
       "⚠️  ATENÇÃO\n\n" +
-        "Estás prestes a apagar TODOS os pedidos da coleção `orders` " +
-        "no Firestore.\n\n" +
-        "Esta operação é IRREVERSÍVEL. Todos os pedidos (ativos, " +
-        "confirmados, em preparação, prontos e pagos) desaparecem " +
-        "do ecrã de Staff e do painel Admin.\n\n" +
-        "Útil para limpar dados antigos.\n\n" +
+        "Vais apagar TODOS os pedidos com tab_status='open' (mesas abertas).\n\n" +
+        "As contas fechadas (histórico) NÃO serão afetadas — estão seguras.\n\n" +
+        "Usa isto no final do turno para limpar mesas esquecidas.\n\n" +
         "Queres continuar?"
     );
     if (!firstConfirm) return;
 
-    // Segunda confirmação: o utilizador tem de escrever "APAGAR"
     const typed = window.prompt(
       "Para confirmares, escreve APAGAR em maiúsculas:"
     );
@@ -62,18 +59,22 @@ export default function ClearAllOrdersButton({ onCleared }) {
     cancelRef.current = false;
 
     try {
-      const snap = await getDocs(collection(db, "orders"));
+      // Apaga APENAS pedidos com tab_status="open" — preserva histórico
+      const q = query(
+        collection(db, "orders"),
+        where("tab_status", "==", "open")
+      );
+      const snap = await getDocs(q);
       const total = snap.size;
       setProgress({ current: 0, total });
 
       if (total === 0) {
         setStatus("done");
-        setMessage("A coleção `orders` já estava vazia.");
+        setMessage("Não há mesas abertas — tudo limpo.");
         if (typeof onCleared === "function") onCleared();
         return;
       }
 
-      // Agrupa em batches de 400 (limite Firestore é 500 ops/batch)
       const allDocs = snap.docs;
       const BATCH_SIZE = 400;
       let deleted = 0;
@@ -95,19 +96,16 @@ export default function ClearAllOrdersButton({ onCleared }) {
 
       if (cancelRef.current) {
         setStatus("idle");
-        setMessage(`Cancelado. ${deleted} de ${total} pedidos apagados.`);
+        setMessage(`Cancelado. ${deleted} de ${total} mesas limpas.`);
       } else {
         setStatus("done");
-        setMessage(`${deleted} pedidos apagados da coleção \`orders\`.`);
+        setMessage(`${deleted} mesas abertas limpas. Histórico preservado.`);
       }
 
       if (typeof onCleared === "function") onCleared();
     } catch (err) {
       setStatus("error");
-      setMessage(
-        `Erro ao apagar pedidos: ${err.message ||
-          "verifica a consola para detalhes."}`
-      );
+      setMessage(`Erro ao limpar: ${err.message || ""}`);
     }
   };
 
@@ -121,7 +119,6 @@ export default function ClearAllOrdersButton({ onCleared }) {
     setProgress({ current: 0, total: 0 });
   };
 
-  // Estado: done
   if (status === "done") {
     return (
       <div className="bg-green-500/10 border border-green-500/30 rounded-2xl p-4 flex items-center gap-3">
@@ -140,13 +137,12 @@ export default function ClearAllOrdersButton({ onCleared }) {
     );
   }
 
-  // Estado: error
   if (status === "error") {
     return (
       <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4 flex items-center gap-3">
         <AlertTriangle className="w-6 h-6 text-red-400 flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <p className="font-semibold text-red-400 text-sm">Erro ao apagar</p>
+          <p className="font-semibold text-red-400 text-sm">Erro ao limpar</p>
           <p className="text-muted-foreground text-xs mt-0.5">{message}</p>
         </div>
         <button
@@ -159,7 +155,6 @@ export default function ClearAllOrdersButton({ onCleared }) {
     );
   }
 
-  // Estado: deleting
   if (status === "deleting") {
     const pct = progress.total
       ? Math.round((progress.current / progress.total) * 100)
@@ -170,7 +165,7 @@ export default function ClearAllOrdersButton({ onCleared }) {
           <Loader2 className="w-5 h-5 text-red-400 animate-spin flex-shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-red-400 text-sm">
-              A apagar pedidos... {progress.current} / {progress.total}
+              A limpar mesas abertas... {progress.current} / {progress.total}
             </p>
             <p className="text-muted-foreground text-xs">
               Por favor não feches esta página.
@@ -193,29 +188,29 @@ export default function ClearAllOrdersButton({ onCleared }) {
     );
   }
 
-  // Estado: idle
+  // idle
   return (
-    <div className="bg-card border border-dashed border-red-500/40 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+    <div className="bg-card border border-dashed border-yellow-500/40 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center gap-3">
       <div className="flex items-center gap-3 flex-1 min-w-0">
-        <div className="w-10 h-10 rounded-xl bg-red-500/15 flex items-center justify-center flex-shrink-0">
-          <Trash2 className="w-5 h-5 text-red-400" />
+        <div className="w-10 h-10 rounded-xl bg-yellow-500/15 flex items-center justify-center flex-shrink-0">
+          <Trash2 className="w-5 h-5 text-yellow-400" />
         </div>
         <div className="min-w-0">
           <p className="font-semibold text-sm">
-            Apagar todos os pedidos
+            Limpar Mesas Esquecidas (Abertas)
           </p>
           <p className="text-muted-foreground text-xs mt-0.5">
-            Remove TODOS os documentos da coleção <code className="text-red-400 font-mono">orders</code>.
-            Irreversível. Usa para limpar dados antigos antes de abrir.
+            Apaga apenas pedidos com conta aberta. O histórico de contas
+            fechadas é preservado.
           </p>
         </div>
       </div>
       <button
         onClick={handleClear}
-        className="flex items-center justify-center gap-2 bg-red-500/90 text-white text-sm font-medium px-4 py-2.5 rounded-xl hover:bg-red-500 transition-colors flex-shrink-0"
+        className="flex items-center justify-center gap-2 bg-yellow-500/90 text-white text-sm font-medium px-4 py-2.5 rounded-xl hover:bg-yellow-500 transition-colors flex-shrink-0"
       >
         <Trash2 className="w-4 h-4" />
-        Apagar tudo
+        Limpar Mesas Abertas
       </button>
     </div>
   );

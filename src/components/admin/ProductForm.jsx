@@ -7,7 +7,7 @@ const categories = ["bebidas", "cocktails", "comida", "sobremesas", "shisha"];
 export default function ProductForm({ product, onClose, onSaved }) {
   const [form, setForm] = useState(product || {
     name: "", description: "", price: "", category: "bebidas",
-    image_url: "", available: true, stock_enabled: false, stock: 0
+    subcategory: "", image_url: "", available: true, stock_enabled: false, stock: 0
   });
   const [loading, setLoading] = useState(false);
 
@@ -69,6 +69,17 @@ export default function ProductForm({ product, onClose, onSaved }) {
               <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
             ))}
           </select>
+        </div>
+
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Subcategoria (opcional)</label>
+          <input
+            type="text"
+            value={form.subcategory || ""}
+            onChange={(e) => set("subcategory", e.target.value)}
+            placeholder="Ex: Cervejas, Águas, Shots..."
+            className="w-full bg-secondary border border-border rounded-xl px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+          />
         </div>
 
         <label className="flex items-center gap-3 cursor-pointer">

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Wine, AlertTriangle, Loader2 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import CategoryTabs from "@/components/menu/CategoryTabs";
@@ -11,6 +11,7 @@ export default function Menu() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [category, setCategory] = useState("todos");
+  const [subcategory, setSubcategory] = useState("todos");
   const [cart, setCart] = useState({});
   const [showCart, setShowCart] = useState(false);
   const [orderPlaced, setOrderPlaced] = useState(false);
@@ -98,9 +99,33 @@ export default function Menu() {
     };
   }, [tableState]);
 
-  const filtered = category === "todos"
-    ? products
-    : products.filter((p) => p.category === category);
+  // === Subcategorias dinâmicas ===
+  // Quando o cliente seleciona uma categoria, extrai as subcategorias
+  // únicas dos produtos dessa categoria (ignorando vazias).
+  const availableSubcategories = useMemo(() => {
+    if (category === "todos") return [];
+    const subs = products
+      .filter((p) => p.category === category && p.subcategory)
+      .map((p) => p.subcategory);
+    return [...new Set(subs)].sort();
+  }, [products, category]);
+
+  // Reset subcategoria quando muda a categoria principal
+  useEffect(() => {
+    setSubcategory("todos");
+  }, [category]);
+
+  // === Filtragem por categoria + subcategoria ===
+  const filtered = useMemo(() => {
+    let result = products;
+    if (category !== "todos") {
+      result = result.filter((p) => p.category === category);
+    }
+    if (subcategory !== "todos" && subcategory) {
+      result = result.filter((p) => p.subcategory === subcategory);
+    }
+    return result;
+  }, [products, category, subcategory]);
 
   const cartCount = Object.values(cart).reduce((a, b) => a + b, 0);
   const cartTotal = Object.entries(cart).reduce((sum, [id, qty]) => {
@@ -215,6 +240,36 @@ export default function Menu() {
       {/* Categories */}
       <div className="px-5 py-4">
         <CategoryTabs active={category} onChange={setCategory} />
+
+        {/* Subcategorias — só aparecem se a categoria selecionada
+            tiver produtos com subcategorias definidas */}
+        {availableSubcategories.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            <button
+              onClick={() => setSubcategory("todos")}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                subcategory === "todos"
+                  ? "bg-primary/20 text-primary border border-primary/30"
+                  : "bg-secondary/50 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Todos
+            </button>
+            {availableSubcategories.map((sub) => (
+              <button
+                key={sub}
+                onClick={() => setSubcategory(sub)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                  subcategory === sub
+                    ? "bg-primary/20 text-primary border border-primary/30"
+                    : "bg-secondary/50 text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {sub}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Products */}

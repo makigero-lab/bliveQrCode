@@ -8,8 +8,6 @@ import SettingsPanel from "@/components/admin/SettingsPanel";
 import QRCodesTab from "@/components/admin/QRCodesTab";
 import StockPanel from "@/components/admin/StockPanel";
 import AnalyticsPanel from "@/components/admin/AnalyticsPanel";
-import ImportCatalogButton from "@/components/admin/ImportCatalogButton";
-import ClearAllProductsButton from "@/components/admin/ClearAllProductsButton";
 import ClearAllOrdersButton from "@/components/admin/ClearAllOrdersButton";
 import BulkProductEditor from "@/components/admin/BulkProductEditor";
 import UsersPanel from "@/components/admin/UsersPanel";
@@ -433,12 +431,6 @@ export default function Admin() {
               >
                 <Plus className="w-4 h-4" /> Adicionar
               </button>
-            </div>
-
-            {/* Ações de catálogo: Importar (esquerda) + Apagar tudo (direita) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <ImportCatalogButton onImported={loadProducts} />
-              <ClearAllProductsButton onCleared={loadProducts} />
             </div>
 
             <div className="space-y-3">
