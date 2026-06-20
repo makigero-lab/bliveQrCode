@@ -39,7 +39,6 @@ export default function SettingsPanel() {
       const { file_url } = await uploadFile({ file });
       set("logo_url", file_url);
     } catch (err) {
-      console.error("[SettingsPanel] Erro no upload do logótipo:", err);
     } finally {
       setUploading(false);
     }

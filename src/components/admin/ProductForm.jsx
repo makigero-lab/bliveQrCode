@@ -23,7 +23,6 @@ export default function ProductForm({ product, onClose, onSaved }) {
         await createProduct(data);
       }
     } catch (err) {
-      console.error("[ProductForm] Erro ao guardar produto:", err);
     } finally {
       setLoading(false);
       onSaved();

@@ -115,11 +115,7 @@ export default function SalesDashboard({ orders }) {
       ]);
 
       downloadCsv(csv, csvFilename("relatorio-vendas"));
-      console.info(
-        `[SalesDashboard] CSV exportado: ${rows.length} sessões, ${filteredOrders.length} pedidos.`
-      );
     } catch (err) {
-      console.error("[SalesDashboard] Erro ao exportar CSV:", err);
       alert(`Erro ao exportar: ${err?.message || ""}`);
     } finally {
       setExporting(false);

@@ -92,7 +92,6 @@ export default function UsersPanel() {
     setCreating(true);
     let secondaryApp = null;
     try {
-      console.info(`[UsersPanel] A criar utilizador ${email} (role=${role}) via Secondary App...`);
 
       // 1. Inicializa app secundária com nome único
       //    (deve ser único por chamada para evitar "app already exists")
@@ -108,11 +107,9 @@ export default function UsersPanel() {
         password
       );
       const newUid = cred.user.uid;
-      console.info(`[UsersPanel] Conta Auth criada (uid: ${newUid}) via Secondary App.`);
 
       // 3. Cria perfil no Firestore (usa a instância principal do db)
       await setUserProfile(newUid, { email, role });
-      console.info(`[UsersPanel] Perfil users/${newUid} criado com role=${role}.`);
 
       // 4. Faz signOut na app secundária (limpa o token localmente)
       try {
@@ -125,15 +122,10 @@ export default function UsersPanel() {
       try {
         await deleteApp(secondaryApp);
         secondaryApp = null;
-        console.info("[UsersPanel] Secondary App apagada.");
       } catch (err) {
-        console.warn("[UsersPanel] Não foi possível apagar Secondary App:", err.message);
       }
 
-      setSuccessMessage(
-        `✅ Utilizador "${email}" criado com role "${role}".\n` +
-          `A tua sessão de admin não foi afetada — podes continuar a trabalhar.`
-      );
+      setSuccessMessage(`Utilizador "${email}" criado com role "${role}".`);
 
       // Limpa form
       setEmail("");
@@ -143,7 +135,6 @@ export default function UsersPanel() {
 
       // A lista atualiza automaticamente via subscribeUsers (onSnapshot)
     } catch (err) {
-      console.error("[UsersPanel] Erro ao criar utilizador:", err);
       const map = {
         "auth/email-already-in-use": "Já existe um utilizador com este email.",
         "auth/invalid-email": "Email inválido.",
@@ -172,30 +163,17 @@ export default function UsersPanel() {
     const confirmMsg =
       roleToDelete === "admin"
         ? `Apagar o ADMIN ${emailToDelete}?\n\n` +
-          `O perfil é removido do Firestore. A conta Auth continua a existir ` +
-          `mas sem perfil → login falha.\n\n` +
-          `⚠️ Para apagar DEFINITIVAMENTE a conta de acesso, tens de ir a:\n` +
-          `   Firebase Console → Authentication → Users → Delete.\n\n` +
-          `Confirmar?`
+          `O utilizador deixará de conseguir fazer login.\n\nConfirmar?`
         : `Apagar o utilizador ${emailToDelete}?\n\n` +
-          `O perfil é removido do Firestore. A conta Auth continua a existir ` +
-          `mas sem perfil → login falha.\n\n` +
-          `⚠️ Para apagar DEFINITIVAMENTE a conta de acesso, tens de ir a:\n` +
-          `   Firebase Console → Authentication → Users → Delete.\n\n` +
-          `Confirmar?`;
+          `O utilizador deixará de conseguir fazer login.\n\nConfirmar?`;
 
     if (!window.confirm(confirmMsg)) return;
 
     try {
       await deleteUserProfile(uid);
-      console.info(`[UsersPanel] Perfil ${emailToDelete} apagado do Firestore.`);
-      setSuccessMessage(
-        `✅ Perfil de "${emailToDelete}" apagado do Firestore.\n` +
-          `⚠️ Lembra-te de apagar a conta de acesso em Firebase Console → Authentication.`
-      );
-      setTimeout(() => setSuccessMessage(""), 6000);
+      setSuccessMessage(`Utilizador "${emailToDelete}" removido.`);
+      setTimeout(() => setSuccessMessage(""), 4000);
     } catch (err) {
-      console.error("[UsersPanel] Erro ao apagar:", err);
       alert(`Erro ao apagar: ${err?.message || ""}`);
     }
   };
@@ -215,17 +193,15 @@ export default function UsersPanel() {
 
     if (!window.confirm(
       `${newActive ? "Ativar" : "Desativar"} o utilizador ${emailToToggle}?\n\n` +
-      (newActive
-        ? "O utilizador volta a conseguir fazer login normalmente."
-        : "O utilizador deixa de conseguir fazer login (mas a sua conta Auth não é apagada).")
+        (newActive
+          ? "O utilizador volta a conseguir fazer login normalmente."
+          : "O utilizador deixa de conseguir fazer login.")
     )) return;
 
     try {
       await setUserActive(uid, newActive);
-      console.info(`[UsersPanel] User ${emailToToggle} ${action}do (active=${newActive}).`);
       // subscribeUsers atualiza a lista automaticamente.
     } catch (err) {
-      console.error(`[UsersPanel] Erro ao ${action}:`, err);
       alert(`Erro ao ${action}: ${err?.message || ""}`);
     }
   };
@@ -362,17 +338,6 @@ export default function UsersPanel() {
             </div>
           )}
 
-          {/* Aviso sobre Secondary App (informativo positivo) */}
-          <div className="bg-green-500/10 border border-green-500/30 rounded-xl px-3 py-2 flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
-            <p className="text-[11px] text-green-300">
-              <strong>Sessão segura:</strong> a criação usa uma app
-              Firebase secundária, pelo que a tua sessão de admin{" "}
-              <strong>não será terminada</strong>. Podes continuar a
-              trabalhar normalmente após criar o utilizador.
-            </p>
-          </div>
-
           <div className="flex gap-2 justify-end pt-1">
             <button
               type="button"
@@ -499,27 +464,11 @@ export default function UsersPanel() {
                     <button
                       onClick={() => handleDelete(u.uid, u.email, u.role)}
                       disabled={isMe}
-                      title={isMe ? "Não podes apagar a tua própria conta" : "Apagar perfil (Firestore)"}
+                      title={isMe ? "Não podes apagar a tua própria conta" : "Remover utilizador"}
                       className="w-9 h-9 rounded-xl bg-destructive/10 flex items-center justify-center hover:bg-destructive/20 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                     >
                       <Trash2 className="w-4 h-4 text-destructive" />
                     </button>
-                    {!isMe && (
-                      <div className="absolute right-0 top-full mt-1 w-56 bg-card border border-border rounded-xl px-3 py-2 text-[10px] text-muted-foreground shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                        <Info className="w-3 h-3 inline mr-1 text-primary" />
-                        <strong className="text-foreground">Nota:</strong> a conta
-                        de acesso tem de ser removida permanentemente em{" "}
-                        <a
-                          href="https://console.firebase.google.com/project/autocell-535c2/authentication/users"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-primary underline"
-                        >
-                          Firebase Console → Authentication
-                        </a>
-                        .
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
@@ -528,39 +477,6 @@ export default function UsersPanel() {
         </div>
       )}
 
-      {/* Info box sobre limitações do Firebase Auth (plano Spark) */}
-      <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 text-xs text-muted-foreground space-y-2">
-        <p className="font-medium text-primary flex items-center gap-1.5">
-          <Info className="w-3.5 h-3.5" />
-          Sobre a gestão de utilizadores (plano Spark — sem Cloud Functions)
-        </p>
-        <p>
-          <strong className="text-foreground">Criar utilizadores:</strong> usa
-          uma app Firebase secundária, pelo que a sessão do admin atual não é
-          terminada. O novo utilizador fica imediatamente disponível para
-          login.
-        </p>
-        <p>
-          <strong className="text-foreground">Apagar utilizadores:</strong>{" "}
-          remove apenas o perfil do Firestore. A conta de acesso (Firebase
-          Auth) tem de ser apagada manualmente em{" "}
-          <a
-            href="https://console.firebase.google.com/project/autocell-535c2/authentication/users"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary underline"
-          >
-            Firebase Console → Authentication
-          </a>
-          . Sem Cloud Functions não é possível apagar contas Auth
-          programaticamente sem estar autenticado como essa conta.
-        </p>
-        <p>
-          As regras de segurança do Firestore devem permitir leitura/escrita
-          em <code className="text-primary font-mono">users/*</code> apenas
-          para utilizadores autenticados com role "admin".
-        </p>
-      </div>
     </div>
   );
 }

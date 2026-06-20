@@ -35,7 +35,6 @@ export function BarSettingsProvider({ children }) {
         applyColor(data.primary_color);
       })
       .catch((err) => {
-        console.error("[BarSettings] Falha ao carregar configuração:", err);
       });
 
     // Subscrição em tempo real — atualiza sempre que o documento muda
@@ -58,7 +57,6 @@ export function BarSettingsProvider({ children }) {
       applyColor(saved.primary_color);
       return saved;
     } catch (err) {
-      console.error("[BarSettings] Falha ao guardar configuração:", err);
       throw err;
     }
   };

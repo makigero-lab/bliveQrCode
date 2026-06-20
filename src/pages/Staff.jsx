@@ -61,13 +61,10 @@ export default function Staff() {
   // Subscrição: mesas abertas (tab_status="open")
   // -------------------------------------------------------------
   useEffect(() => {
-    console.info("[Staff] A subscrever mesas ABERTAS (tab_status=open)...");
 
     const unsubscribe = subscribeOpenOrders((event) => {
-      console.info("[Staff][open] Evento:", event.type, event.id || "");
 
       if (event.type === "snapshot") {
-        console.info(`[Staff][open] Snapshot: ${event.data.length} pedidos.`);
         setOpenOrders(event.data);
         event.data.forEach((o) => knownIdsRef.current.add(o.id));
         setLoadingOpen(false);
@@ -75,9 +72,6 @@ export default function Staff() {
         // Só dispara som/alerta se for um pedido NOVO (id desconhecido)
         if (knownIdsRef.current.has(event.id)) return;
         knownIdsRef.current.add(event.id);
-        console.info(
-          `[Staff][open] ✨ Novo pedido: mesa ${event.data?.table}, €${event.data?.total_amount}`
-        );
         setOpenOrders((prev) => {
           if (prev.some((o) => o.id === event.id)) return prev;
           return [event.data, ...prev];
@@ -100,7 +94,6 @@ export default function Staff() {
     });
 
     return () => {
-      console.info("[Staff] A cancelar subscrição de mesas abertas.");
       unsubscribe();
     };
   }, [playSound]);
@@ -134,7 +127,6 @@ export default function Staff() {
         setHasMoreClosed(result.hasMore);
         setLoadingClosed(false);
       } catch (err) {
-        console.error("[Staff] Erro ao carregar histórico:", err);
         setLoadingClosed(false);
       } finally {
         setLoadingMoreClosed(false);
@@ -616,7 +608,6 @@ export default function Staff() {
             tableNumber={posModalTable}
             onClose={() => setPosModalTable(null)}
             onSubmitted={() => {
-              console.info(`[Staff] Pedido POS submetido para mesa ${posModalTable}.`);
             }}
           />
         )}
@@ -653,7 +644,6 @@ function NewTableModal({ onClose, onSelectTable }) {
         setLoading(false);
       })
       .catch((err) => {
-        console.error("[NewTableModal] Erro:", err);
         setError("Não foi possível carregar as mesas.");
         setLoading(false);
       });
@@ -772,8 +762,6 @@ function ClosedSessionCard({ table, closedAt, orders, total }) {
         `${orders.length} pedido${orders.length !== 1 ? "s" : ""} desta conta ` +
         `voltará${orders.length !== 1 ? "ão" : "á"} para "Mesas Abertas".\n\n` +
         `Total: €${total.toFixed(2)}\n\n` +
-        `Isto é útil se fechaste a mesa por engano ou se o cliente ` +
-        `quer continuar a pedir.\n\n` +
         `Confirmar?`
     );
     if (!confirm) return;
@@ -781,22 +769,15 @@ function ClosedSessionCard({ table, closedAt, orders, total }) {
     setReopening(true);
     setError("");
     try {
-      console.info(
-        `[Histórico] A reabrir Mesa ${table} (sessão ${closedAt}, ${orders.length} pedidos)...`
-      );
       const result = await reopenTableOrders(table, {
         mode: "session",
         closedAt,
       });
-      console.info(
-        `[Histórico] Mesa ${table} reaberta: ${result.reopened} pedidos atualizados.`
-      );
       // O onSnapshot de "open" e "closed" dispara automaticamente:
       // - Pedidos saem do histórico (subscribeClosedOrders)
       // - Pedidos entram nas mesas abertas (subscribeOpenOrders)
       // Não é preciso fazer nada aqui.
     } catch (err) {
-      console.error(`[Histórico] Erro ao reabrir Mesa ${table}:`, err);
       setError(`Erro ao reabrir: ${err?.message || "verifica a consola."}`);
     } finally {
       setReopening(false);

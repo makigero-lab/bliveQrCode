@@ -116,7 +116,6 @@ export default function ClearAllProductsButton({ onCleared }) {
 
       if (typeof onCleared === "function") onCleared();
     } catch (err) {
-      console.error("[ClearAllProducts] Erro:", err);
       setStatus("error");
       setMessage(
         `Erro ao apagar produtos: ${err.message ||

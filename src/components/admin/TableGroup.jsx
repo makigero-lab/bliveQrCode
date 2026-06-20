@@ -71,7 +71,6 @@ export default function TableGroup({ tableNumber, orders, onUpdate, onClearTable
       await updateOrder(order.id, { status: next });
       if (onUpdate) onUpdate();
     } catch (err) {
-      console.error("[TableGroup] Erro ao avançar pedido:", err);
     }
   };
 
@@ -82,7 +81,6 @@ export default function TableGroup({ tableNumber, orders, onUpdate, onClearTable
         await deleteOrder(order.id);
       }
     } catch (err) {
-      console.error("[TableGroup] Erro ao limpar mesa:", err);
     } finally {
       setClearing(false);
       if (onClearTable) onClearTable();

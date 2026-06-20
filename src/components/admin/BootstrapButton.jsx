@@ -70,7 +70,6 @@ export default function BootstrapButton({ onSetupComplete }) {
         const snap = await getDocs(collection(db, col));
         result[col] = snap.size;
       } catch (err) {
-        console.warn(`[Bootstrap] Erro ao ler ${col}:`, err);
         result[col] = -1; // erro
       }
     }
@@ -180,7 +179,6 @@ export default function BootstrapButton({ onSetupComplete }) {
       // Recarrega contagens
       setTimeout(() => checkCollections(), 500);
     } catch (err) {
-      console.error("[Bootstrap] Erro:", err);
       setError(err?.message || "Erro desconhecido.");
       setStatus("error");
     }

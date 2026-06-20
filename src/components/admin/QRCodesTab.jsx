@@ -146,11 +146,9 @@ export default function QRCodesTab({ baseUrl }) {
     setError("");
     try {
       await createTable(num);
-      console.info(`[QRCodesTab] Mesa ${num} criada.`);
       setNewMesa("");
       setShowAdd(false);
     } catch (err) {
-      console.error("[QRCodesTab] Erro ao criar mesa:", err);
       setError(`Erro ao criar mesa: ${err?.message || ""}`);
     } finally {
       setCreating(false);
@@ -168,9 +166,7 @@ export default function QRCodesTab({ baseUrl }) {
 
     try {
       await deleteTable(mid);
-      console.info(`[QRCodesTab] Mesa ${mesaNum} (id=${mid}) apagada.`);
     } catch (err) {
-      console.error("[QRCodesTab] Erro ao apagar mesa:", err);
       alert(`Erro ao apagar: ${err?.message || ""}`);
     }
   };

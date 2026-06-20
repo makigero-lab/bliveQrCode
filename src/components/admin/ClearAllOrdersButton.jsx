@@ -5,7 +5,7 @@
 //
 // Lê todos os documentos da coleção `orders` no Firestore e
 // apaga-os em lotes de 400 via `writeBatch`. Útil para limpar
-// dados de teste antes de abrir o bar.
+// dados antigos.
 //
 // Espelho visual do `ClearAllProductsButton` mas para a coleção
 // `orders`. Dupla confirmação (dialog + prompt "APAGAR").
@@ -42,7 +42,7 @@ export default function ClearAllOrdersButton({ onCleared }) {
         "Esta operação é IRREVERSÍVEL. Todos os pedidos (ativos, " +
         "confirmados, em preparação, prontos e pagos) desaparecem " +
         "do ecrã de Staff e do painel Admin.\n\n" +
-        "Útil para limpar dados de teste antes de abrir o bar.\n\n" +
+        "Útil para limpar dados antigos.\n\n" +
         "Queres continuar?"
     );
     if (!firstConfirm) return;
@@ -103,7 +103,6 @@ export default function ClearAllOrdersButton({ onCleared }) {
 
       if (typeof onCleared === "function") onCleared();
     } catch (err) {
-      console.error("[ClearAllOrders] Erro:", err);
       setStatus("error");
       setMessage(
         `Erro ao apagar pedidos: ${err.message ||
@@ -207,7 +206,7 @@ export default function ClearAllOrdersButton({ onCleared }) {
           </p>
           <p className="text-muted-foreground text-xs mt-0.5">
             Remove TODOS os documentos da coleção <code className="text-red-400 font-mono">orders</code>.
-            Irreversível. Usa para limpar dados de teste antes de abrir.
+            Irreversível. Usa para limpar dados antigos antes de abrir.
           </p>
         </div>
       </div>

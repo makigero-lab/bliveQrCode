@@ -11,7 +11,6 @@ export default function StockPanel() {
       const data = await listProducts();
       setProducts(data.filter((p) => p.stock_enabled));
     } catch (err) {
-      console.error("[StockPanel] Erro ao carregar produtos:", err);
       setProducts([]);
     } finally {
       setLoading(false);
@@ -29,7 +28,6 @@ export default function StockPanel() {
       await updateProduct(product.id, updates);
       await load();
     } catch (err) {
-      console.error("[StockPanel] Erro ao ajustar stock:", err);
     }
   };
 
@@ -42,7 +40,6 @@ export default function StockPanel() {
       await updateProduct(product.id, updates);
       await load();
     } catch (err) {
-      console.error("[StockPanel] Erro ao definir stock:", err);
     }
   };
 

@@ -18,7 +18,7 @@ import { getUserProfile, setUserProfile } from "@/lib/db";
 /**
  * AuthContext (Firebase Auth real)
  * -----------------------------------------------------------------
- * Substitui completamente o bypass demo. Usa:
+ * Usa:
  *   - Firebase Auth (Email/Password) para autenticação real.
  *   - Firestore coleção `users/{uid}` para guardar a `role`
  *     ("admin" | "staff") de cada utilizador.
@@ -71,11 +71,9 @@ export const AuthProvider = ({ children }) => {
   // onAuthStateChanged: dispara uma vez na carga (mesmo que não
   // haja sessão) e depois sempre que há login/logout.
   useEffect(() => {
-    console.info("[Auth] A subscrever estado de auth...");
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!firebaseUser) {
         // Sem sessão
-        console.info("[Auth] Sem utilizador autenticado.");
         setUser(null);
         setIsAuthenticated(false);
         setAuthChecked(true);
@@ -84,15 +82,11 @@ export const AuthProvider = ({ children }) => {
       }
 
       // Há sessão Firebase Auth — ler perfil (role + active) no Firestore
-      console.info(`[Auth] Sessão ativa: ${firebaseUser.email}. A ler perfil...`);
       try {
         const profile = await getUserProfile(firebaseUser.uid);
         if (!profile) {
           // Utilizador tem conta Auth mas não tem perfil na coleção
           // `users` — provavelmente foi apagado pelo admin. Faz logout.
-          console.warn(
-            `[Auth] Utilizador ${firebaseUser.email} sem perfil em users/. A fazer signOut.`
-          );
           await signOut(auth);
           setUser(null);
           setIsAuthenticated(false);
@@ -109,9 +103,6 @@ export const AuthProvider = ({ children }) => {
         // Verifica se o utilizador está ativo. Se `active === false`,
         // o admin desativou-o — login é rejeitado.
         if (profile.active === false) {
-          console.warn(
-            `[Auth] Utilizador ${firebaseUser.email} está desativado (active=false). A fazer signOut.`
-          );
           await signOut(auth);
           setUser(null);
           setIsAuthenticated(false);
@@ -125,9 +116,6 @@ export const AuthProvider = ({ children }) => {
           return;
         }
 
-        console.info(
-          `[Auth] Perfil carregado: role=${profile.role}, email=${profile.email}, active=${profile.active}.`
-        );
         setUser({
           uid: firebaseUser.uid,
           email: profile.email || firebaseUser.email,
@@ -139,7 +127,6 @@ export const AuthProvider = ({ children }) => {
         setAuthChecked(true);
         setIsLoadingAuth(false);
       } catch (err) {
-        console.error("[Auth] Erro ao ler perfil:", err);
         setUser(null);
         setIsAuthenticated(false);
         setAuthError({
@@ -152,7 +139,6 @@ export const AuthProvider = ({ children }) => {
     });
 
     return () => {
-      console.info("[Auth] A cancelar subscrição de auth.");
       unsubscribe();
     };
   }, []);
@@ -249,7 +235,6 @@ export const AuthProvider = ({ children }) => {
       await signOut(auth);
       // onAuthStateChanged dispara com null → estado é limpo.
     } catch (err) {
-      console.error("[Auth] Erro no logout:", err);
     }
   }, []);
 
@@ -272,7 +257,7 @@ export const AuthProvider = ({ children }) => {
     // silencioso é complicado; em vez disso, o utilizador atual será
     // o novo user até o admin fazer login novamente.
     //
-    // WORKAROUND: O admin tem de voltar a fazer login após criar
+    // 
     // um utilizador. Avisamos via mensagem.
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const uid = cred.user.uid;

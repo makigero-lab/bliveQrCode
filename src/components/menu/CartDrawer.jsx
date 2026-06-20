@@ -46,28 +46,19 @@ export default function CartDrawer({ cart, products, onClose, onRemove, onAdd, t
           total: i.total,
         })),
         total_amount: total,
-        status: "pendente",
+        status: "recebido",
         tab_status: "open",
         notes: notes || null,
       };
 
-      console.info("[CartDrawer] A enviar pedido para Firestore:", {
-        mesa: payload.table,
-        items: payload.items.length,
-        total: payload.total_amount,
-        tab_status: payload.tab_status,
-      });
-
       const created = await createOrder(payload);
 
-      console.info("[CartDrawer] Pedido criado com id:", created.id);
 
       // Só avança para o ecrã de "Obrigado" se o pedido foi realmente
       // gravado no Firestore. Antes, chamava onOrderPlaced() no finally
       // mesmo em caso de erro — isso escondia falhas do utilizador.
       onOrderPlaced();
     } catch (err) {
-      console.error("[CartDrawer] Erro ao enviar pedido:", err);
       setError(
         `Não foi possível enviar o pedido. ${err?.message || ""}.\n` +
           "Verifica a ligação à internet e tenta novamente."

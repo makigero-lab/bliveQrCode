@@ -117,7 +117,6 @@ export function subscribeProducts(callback) {
       // antiga (que esperava eventos create/update/delete).
       callback({ type: "snapshot", data: items });
     },
-    (err) => console.error("[db] subscribeProducts error:", err)
   );
 }
 
@@ -151,7 +150,6 @@ export async function createOrder(data) {
 
   // Validação mínima dos campos obrigatórios
   if (!data.table_number && !data.table) {
-    console.warn("[db] createOrder chamado sem table/table_number — usando '1'.");
   }
   if (!Array.isArray(data.items) || data.items.length === 0) {
     throw new Error("createOrder: items[] vazio ou inválido.");
@@ -172,7 +170,6 @@ export async function createOrder(data) {
   const mergeResult = await tryMergeWithOpenOrder(tableStr, data.items, data.notes);
 
   if (mergeResult.merged) {
-    console.info(`[db] Pedido merged com ${mergeResult.id} (mesa ${tableStr}).`);
     return mergeResult.order;
   }
 
@@ -251,7 +248,6 @@ async function tryMergeWithOpenOrder(tableStr, newItems, newNotes) {
     // Faz merge com o primeiro pedido "recebido" encontrado
     return _doMerge(snap.docs[0], newItems, newNotes);
   } catch (err) {
-    console.warn("[db] tryMergeWithOpenOrder falhou (cria novo):", err.message);
     return { merged: false };
   }
 }
@@ -404,16 +400,8 @@ export function subscribeOrders(callback) {
   };
 
   const handleError = (err, isPrimary) => {
-    console.error(
-      `[db] subscribeOrders ${isPrimary ? "primary" : "fallback"} error:`,
-      err
-    );
-
     // Se a query com orderBy falhar, tenta a query simples (sem orderBy)
     if (isPrimary) {
-      console.warn(
-        "[db] subscribeOrders: a tentar query sem orderBy (fallback)..."
-      );
       try {
         unsub = onSnapshot(
           collection(db, "orders"),
@@ -421,7 +409,7 @@ export function subscribeOrders(callback) {
           (err2) => handleError(err2, false)
         );
       } catch (e) {
-        console.error("[db] subscribeOrders fallback falhou:", e);
+        // fallback também falhou — não há mais nada a fazer
       }
     }
   };
@@ -515,7 +503,6 @@ export async function loadClosedOrdersPage(cursor, pageSize = 20) {
 
     return { items, nextCursor, hasMore };
   } catch (err) {
-    console.error("[db] loadClosedOrdersPage error:", err);
 
     // Fallback: sem orderBy (legacy) — ordena no cliente
     try {
@@ -551,7 +538,6 @@ export async function loadClosedOrdersPage(cursor, pageSize = 20) {
 
       return { items, nextCursor, hasMore };
     } catch (fallbackErr) {
-      console.error("[db] loadClosedOrdersPage fallback error:", fallbackErr);
       return { items: [], nextCursor: null, hasMore: false };
     }
   }
@@ -602,15 +588,7 @@ function subscribeByTabStatus(tabStatus, callback) {
   };
 
   const handleError = (err, isPrimary) => {
-    console.error(
-      `[db] subscribeByTabStatus(${tabStatus}) ${isPrimary ? "primary" : "fallback"} error:`,
-      err
-    );
-
     if (isPrimary) {
-      console.warn(
-        `[db] subscribeByTabStatus(${tabStatus}): a tentar query sem orderBy (fallback)...`
-      );
       try {
         unsub = onSnapshot(
           query(
@@ -621,7 +599,7 @@ function subscribeByTabStatus(tabStatus, callback) {
           (err2) => handleError(err2, false)
         );
       } catch (e) {
-        console.error(`[db] subscribeByTabStatus(${tabStatus}) fallback falhou:`, e);
+        // fallback também falhou
       }
     }
   };
@@ -833,7 +811,6 @@ export function subscribeBarSettings(callback) {
         callback({ id: snap.id, ...snap.data() });
       }
     },
-    (err) => console.error("[db] subscribeBarSettings error:", err)
   );
 }
 
@@ -963,7 +940,6 @@ export function subscribeTables(callback) {
         });
       callback(items);
     },
-    (err) => console.error("[db] subscribeTables error:", err)
   );
 }
 
@@ -1084,7 +1060,6 @@ export function subscribeUsers(callback) {
         });
       callback(items);
     },
-    (err) => console.error("[db] subscribeUsers error:", err)
   );
 }
 

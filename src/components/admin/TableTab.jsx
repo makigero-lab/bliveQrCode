@@ -125,7 +125,6 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
     try {
       await updateOrder(order.id, { status: nextStatus });
     } catch (err) {
-      console.error(`[TableTab] Erro ao avançar pedido ${order.id}:`, err);
       setError(`Erro ao atualizar pedido: ${err?.message || ""}`);
     } finally {
       setAdvancingIds((prev) => {
@@ -151,7 +150,6 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
     try {
       await closeTableOrders(tableNumber, user);
     } catch (err) {
-      console.error(`[TableTab] Erro ao fechar mesa ${tableNumber}:`, err);
       setError(`Erro ao fechar mesa: ${err?.message || ""}`);
     } finally {
       setClearing(false);

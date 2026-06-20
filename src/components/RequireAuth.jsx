@@ -45,9 +45,6 @@ export default function RequireAuth({
 
   // Não autenticado → /login
   if (!isAuthenticated || !user) {
-    console.info(
-      `[RequireAuth] Não autenticado em ${window.location.pathname} → /login`
-    );
     // Redirect no próximo tick para evitar warning de navigate durante render
     setTimeout(() => navigate("/login", { replace: true }), 0);
     return (
@@ -60,9 +57,6 @@ export default function RequireAuth({
   // Verificação de role
   // /admin exige role "admin". Se staff tentar entrar → /staff.
   if (requireRole === "admin" && user.role !== "admin") {
-    console.info(
-      `[RequireAuth] role=${user.role} sem permissão para /admin → /staff`
-    );
     setTimeout(() => navigate("/staff", { replace: true }), 0);
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-background px-6">

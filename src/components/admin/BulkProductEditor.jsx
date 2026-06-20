@@ -68,10 +68,7 @@ export default function BulkProductEditor() {
       const data = await listProducts();
       setProducts(data);
     } catch (err) {
-      console.error("[BulkEditor] Erro ao carregar produtos:", err);
-      setLoadingError(
-        `Não foi possível carregar os produtos. ${err?.message || ""}`
-      );
+      setLoadingError("Não foi possível carregar os produtos.");
     } finally {
       setLoading(false);
     }
@@ -161,7 +158,6 @@ export default function BulkProductEditor() {
         setSaveStates((prev) => ({ ...prev, [id]: "idle" }));
       }, 2500);
     } catch (err) {
-      console.error(`[BulkEditor] Erro ao guardar produto ${id}:`, err);
       setSaveStates((prev) => ({ ...prev, [id]: "error" }));
     }
   };
@@ -229,11 +225,8 @@ export default function BulkProductEditor() {
       setDrafts({});
       setBulkMessage(`✅ ${success} produtos guardados com sucesso!`);
     } catch (err) {
-      console.error("[BulkEditor] Erro no saveAll:", err);
       errors = dirtyIds.length - success;
-      setBulkMessage(
-        `⚠️ Erro: ${success} guardados, ${errors} falharam. ${err?.message || ""}`
-      );
+      setBulkMessage(`Erro: ${success} guardados, ${errors} falharam.`);
     } finally {
       setBulkSaving(false);
       setTimeout(() => setBulkMessage(""), 5000);

@@ -50,7 +50,6 @@ export default function POSModal({ tableNumber, onClose, onSubmitted }) {
         setLoading(false);
       })
       .catch((err) => {
-        console.error("[POSModal] Erro ao carregar produtos:", err);
         if (cancelled) return;
         setError("Não foi possível carregar os produtos.");
         setLoading(false);
@@ -120,12 +119,10 @@ export default function POSModal({ tableNumber, onClose, onSubmitted }) {
         notes: null,
       });
 
-      console.info(`[POSModal] Pedido submetido para mesa ${tableNumber} (${items.length} itens, €${cartTotal.toFixed(2)}).`);
 
       if (onSubmitted) onSubmitted();
       onClose();
     } catch (err) {
-      console.error("[POSModal] Erro ao submeter:", err);
       setError(`Erro ao submeter: ${err?.message || ""}`);
     } finally {
       setSubmitting(false);

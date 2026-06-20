@@ -56,7 +56,7 @@ export default function ImportCatalogButton({ onImported }) {
       `Vais importar ${CATALOG_TOTAL} produtos do catálogo B'Live para o Firestore.\n\n` +
         `Os produtos são gravados com id = slug(nome) por isso o import é IDEMPOTENTE:\n` +
         `produtos já existentes serão atualizados, novos serão criados.\n\n` +
-        `Continuar?`
+        `Confirmar?`
     );
     if (!confirm) return;
 
@@ -106,7 +106,6 @@ export default function ImportCatalogButton({ onImported }) {
             created++;
           }
         } catch (err) {
-          console.error(`[ImportCatalog] Erro no produto "${raw.name}":`, err);
           errors++;
         }
 
@@ -122,16 +121,12 @@ export default function ImportCatalogButton({ onImported }) {
 
       if (errors > 0) {
         setStatus("error");
-        setMessage(
-          `Import concluído com ${errors} erro(s). ${created} criados, ${updated} atualizados.`
-        );
+        setMessage(`Import concluído com ${errors} erro(s). ${created} criados, ${updated} atualizados.`);
       } else if (cancelRef.current) {
         setStatus("idle");
       } else {
         setStatus("done");
-        setMessage(
-          `${created} produtos criados, ${updated} atualizados. Catálogo sincronizado com o Firestore!`
-        );
+        setMessage(`${created} produtos criados, ${updated} atualizados. Catálogo sincronizado!`);
       }
 
       // Callback para o Admin.jsx recarregar a lista
@@ -139,11 +134,8 @@ export default function ImportCatalogButton({ onImported }) {
         onImported();
       }
     } catch (err) {
-      console.error("[ImportCatalog] Erro geral:", err);
       setStatus("error");
-      setMessage(
-        `Erro ao importar: ${err.message || "verifica a consola para detalhes."}`
-      );
+      setMessage(`Erro ao importar: ${err?.message || ""}`);
     }
   };
 

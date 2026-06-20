@@ -109,11 +109,7 @@ export default function AnalyticsPanel({ orders }) {
       ]);
 
       downloadCsv(csv, csvFilename("analytics-pedidos"));
-      console.info(
-        `[AnalyticsPanel] CSV exportado: ${rows.length} sessões, ${filteredOrders.length} pedidos.`
-      );
     } catch (err) {
-      console.error("[AnalyticsPanel] Erro ao exportar CSV:", err);
       alert(`Erro ao exportar: ${err?.message || ""}`);
     } finally {
       setExporting(false);

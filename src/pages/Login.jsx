@@ -29,7 +29,7 @@ function translateFirebaseError(code) {
     "auth/network-request-failed":
       "Sem ligação à internet. Verifica a rede e tenta novamente.",
     "auth/configuration-not-found":
-      "Email/Password não está ativado no projeto Firebase. Ativa em Firebase Console → Authentication → Sign-in method.",
+      "Método de login não configurado. Contacta o administrador.",
   };
   return map[code] || "Erro ao fazer login. Tenta novamente.";
 }
@@ -57,7 +57,6 @@ export default function Login() {
       // onAuthStateChanged + getUserProfile). Já pode redirecionar
       // para a rota certa sem depender de state externo.
       const user = await login(email, password);
-      console.info("[Login] Sucesso:", user.email, "role:", user.role);
 
       // Redireciona conforme a role:
       // - admin → /admin
@@ -66,7 +65,6 @@ export default function Login() {
       const target = user.role === "admin" ? "/admin" : "/staff";
       navigate(target, { replace: true });
     } catch (err) {
-      console.error("[Login] Erro:", err);
 
       // Erros personalizados do AuthContext (não Firebase Auth)
       if (err?.type === "user_not_registered") {

@@ -38,22 +38,18 @@ export default function Menu() {
       if (mid) {
         // Modo seguro: valida o ID na coleção `tables`
         try {
-          console.info(`[Menu] A validar mesa com m=${mid}...`);
           const table = await getTableByMid(mid);
           if (cancelled) return;
           if (table) {
-            console.info(`[Menu] Mesa válida: número ${table.table_number}.`);
             setTableNumber(String(table.table_number));
             setTableState("valid");
           } else {
-            console.warn(`[Menu] Mesa ${mid} não encontrada em tables/.`);
             setTableError(
               "Este QR code não corresponde a uma mesa registada. Pede ao staff um QR code válido."
             );
             setTableState("invalid");
           }
         } catch (err) {
-          console.error("[Menu] Erro ao validar mesa:", err);
           if (cancelled) return;
           setTableError(
             "Não foi possível validar a mesa. Verifica a tua ligação à internet."
@@ -62,16 +58,10 @@ export default function Menu() {
         }
       } else if (legacyMesa) {
         // Modo legacy: aceita ?mesa=N / ?table=N com aviso.
-        // (Apenas para retrocompatibilidade — clientes novos devem
-        // usar QR codes com ?m= gerados pelo painel Admin.)
-        console.warn(
-          `[Menu] A usar mesa legacy=${legacyMesa} (sem ?m=). Recomenda-se gerar QR codes novos.`
-        );
         setTableNumber(String(legacyMesa));
         setTableState("valid");
       } else {
         // Sem ?m= nem ?mesa= — bloqueia.
-        console.warn("[Menu] Sem parâmetro ?m= nem ?mesa= no URL.");
         setTableError(
           "Falta o identificador da mesa. Acede ao menu através do QR code colocado na mesa."
         );
@@ -98,7 +88,6 @@ export default function Menu() {
         setLoading(false);
       })
       .catch((err) => {
-        console.error("[Menu] Falha ao carregar produtos:", err);
         if (cancelled) return;
         setProducts([]);
         setLoading(false);
