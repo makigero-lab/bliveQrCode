@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Plus, RefreshCw, LayoutGrid, ClipboardList, QrCode, Trash2, Pencil, Wine, BarChart2, Settings, Wifi, PackageOpen, LineChart, Users, LogOut, Lock } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import OrderCard from "@/components/admin/OrderCard";
