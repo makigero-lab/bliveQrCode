@@ -283,22 +283,49 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
 
                   {/* Itens */}
                   <div className="px-3 py-2 space-y-1">
-                    {(order.items || []).map((item, i) => (
-                      <div
-                        key={`${item.product_id || i}`}
-                        className="flex justify-between text-xs items-center"
-                      >
-                        <span className="text-foreground flex items-center gap-1.5 min-w-0">
-                          <span className="bg-primary/20 text-primary font-bold px-1 py-0.5 rounded text-[10px] flex-shrink-0 min-w-[22px] text-center">
-                            {item.quantity}×
+                    {(order.items || []).map((item, i) => {
+                      // Verifica se este item foi adicionado após o pedido
+                      // original (via merge). Compara added_at com created_date.
+                      const isMergedItem =
+                        item.added_at &&
+                        order.created_date &&
+                        new Date(item.added_at).getTime() >
+                          new Date(order.created_date).getTime();
+                      // Se o item já existia mas teve quantidade aumentada
+                      // no último merge, mostra "+N" ao lado da quantidade.
+                      const mergeQty = Number(item.last_merge_qty) || 0;
+
+                      return (
+                        <div
+                          key={`${item.product_id || i}`}
+                          className={`flex justify-between text-xs items-center ${
+                            isMergedItem ? "bg-primary/5 -mx-1 px-1 rounded" : ""
+                          }`}
+                        >
+                          <span className="text-foreground flex items-center gap-1.5 min-w-0">
+                            <span className="bg-primary/20 text-primary font-bold px-1 py-0.5 rounded text-[10px] flex-shrink-0 min-w-[22px] text-center">
+                              {item.quantity}×
+                            </span>
+                            {/* Badge "+N" para itens que tiveram quantidade aumentada */}
+                            {mergeQty > 0 && (
+                              <span className="bg-green-500/20 text-green-400 font-bold px-1 py-0.5 rounded text-[9px] flex-shrink-0">
+                                +{mergeQty}
+                              </span>
+                            )}
+                            <span className="truncate">{item.product_name}</span>
+                            {/* Badge "novo" para itens adicionados via merge */}
+                            {isMergedItem && (
+                              <span className="bg-primary/20 text-primary font-bold px-1 py-0.5 rounded text-[8px] flex-shrink-0 uppercase tracking-wider">
+                                novo
+                              </span>
+                            )}
                           </span>
-                          <span className="truncate">{item.product_name}</span>
-                        </span>
-                        <span className="text-muted-foreground font-medium flex-shrink-0 ml-2">
-                          €{Number(item.total).toFixed(2)}
-                        </span>
-                      </div>
-                    ))}
+                          <span className="text-muted-foreground font-medium flex-shrink-0 ml-2">
+                            €{Number(item.total).toFixed(2)}
+                          </span>
+                        </div>
+                      );
+                    })}
                     {order.notes && (
                       <div className="mt-1 bg-yellow-500/10 border border-yellow-500/30 rounded-lg px-2 py-1.5 flex items-start gap-1.5">
                         <MessageSquare className="w-2.5 h-2.5 text-yellow-400 flex-shrink-0 mt-0.5" />

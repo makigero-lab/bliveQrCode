@@ -189,6 +189,11 @@ export async function createOrder(data) {
       quantity: Number(i.quantity) || 1,
       unit_price: Number(i.unit_price) || 0,
       total: Number(i.total) || 0,
+      // Timestamp de quando este item foi adicionado ao pedido.
+      // Itens do pedido original têm added_at = created_date.
+      // Itens adicionados via merge têm added_at = timestamp do merge.
+      // O barman usa isto para distinguir "novo" de "original".
+      added_at: isoNow,
     })),
     total_amount: Number(data.total_amount) || 0,
     // Estado da conta (open = mesa aberta; closed = mesa fechada/paga)
@@ -273,6 +278,7 @@ async function _doMerge(orderDoc, newItems, newNotes) {
     ...orderDoc.data(),
   });
   const existingItems = Array.isArray(existing.items) ? existing.items : [];
+  const mergeTs = new Date().toISOString();
 
   // Faz merge dos itens: soma quantidades se product_id já existe
   const mergedItems = [...existingItems];
@@ -281,19 +287,28 @@ async function _doMerge(orderDoc, newItems, newNotes) {
       (i) => i.product_id === newItem.product_id
     );
     if (idx >= 0) {
+      // Item já existe → soma quantidade e marca quanto foi adicionado
+      const addedQty = Number(newItem.quantity) || 0;
       mergedItems[idx] = {
         ...mergedItems[idx],
-        quantity: (Number(mergedItems[idx].quantity) || 0) + (Number(newItem.quantity) || 0),
+        quantity: (Number(mergedItems[idx].quantity) || 0) + addedQty,
         total:
           (Number(mergedItems[idx].total) || 0) + (Number(newItem.total) || 0),
+        // Marca quantas unidades foram adicionadas neste merge.
+        // O barman vê "+2" ao lado da quantidade total.
+        last_merge_qty: addedQty,
+        last_merge_at: mergeTs,
       };
     } else {
+      // Item novo (não existia no pedido original) → marca como "novo"
       mergedItems.push({
         product_id: String(newItem.product_id || ""),
         product_name: String(newItem.product_name || ""),
         quantity: Number(newItem.quantity) || 1,
         unit_price: Number(newItem.unit_price) || 0,
         total: Number(newItem.total) || 0,
+        // Timestamp do merge → o barman vê badge "novo" neste item
+        added_at: mergeTs,
       });
     }
   }
@@ -311,15 +326,14 @@ async function _doMerge(orderDoc, newItems, newNotes) {
       : newNotes;
   }
 
-  const now = new Date().toISOString();
   const patch = {
     items: mergedItems,
     total_amount: newTotalAmount,
     notes: mergedNotes,
-    updated_date: now,
+    updated_date: mergeTs,
     // Registra quantos merges foram feitos (auditoria)
     merge_count: (Number(existing.merge_count) || 0) + 1,
-    last_merge_at: now,
+    last_merge_at: mergeTs,
   };
 
   await updateDoc(orderDoc.ref, patch);
