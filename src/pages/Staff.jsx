@@ -447,9 +447,9 @@ export default function Staff() {
                 )}
                 <button
                   onClick={() => setShowNewTableModal(true)}
-                  className="flex items-center gap-1 bg-primary text-primary-foreground text-xs font-semibold px-3 py-2 rounded-xl hover:bg-primary/90 transition-colors"
+                  className="flex items-center gap-1.5 bg-primary text-primary-foreground text-sm font-bold px-4 py-2.5 rounded-xl min-h-[44px] hover:bg-primary/90 active:scale-95 transition-all"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Plus className="w-4 h-4" />
                   Nova Mesa
                 </button>
               </div>
@@ -473,7 +473,7 @@ export default function Staff() {
                 </p>
               </div>
             ) : (
-              <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {sortedTables.map((table) => (
                   <TableTab
                     key={table}

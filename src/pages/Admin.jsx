@@ -329,7 +329,7 @@ export default function Admin() {
               </div>
             ) : ordersFilter === "open" ? (
               /* Vista Mesas Abertas: reutiliza TableTab do /staff */
-              <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {adminSortedTables.map((table) => (
                   <TableTab
                     key={table}

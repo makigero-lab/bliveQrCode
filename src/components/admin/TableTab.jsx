@@ -1,14 +1,13 @@
 // src/components/admin/TableTab.jsx
 // -------------------------------------------------------------
-// Cartão de Mesa (Open Tab) para o ecrã /staff.
+// Cartão de Mesa (Open Tab) — otimizado para tablet touchscreen.
 //
-// Modelo Open Tabs com linha de montagem:
-//   - Mesa aberta (tab_status="open"): mostra pedidos individuais,
-//     cada um com estado recebido → pronto → entregue.
-//   - Botões para o staff avançar o estado de cada pedido.
-//   - Botão "+ Adicionar Pedido" para o staff adicionar produtos
-//     manualmente (POS mode).
-//   - Botão "Limpar Mesa" para fechar a conta (Caixa).
+// Design Tablet-First:
+//   - Cabeçalho de alto contraste (fundo sólido, texto branco)
+//   - Touch targets grandes (min-h-[44px]) em todos os botões
+//   - Botão "Cancelar" isolado dos botões de avançar estado
+//   - Badges de estado vibrantes (laranja/azul/verde)
+//   - shadow-md + rounded-2xl para parecer bloco físico
 // -------------------------------------------------------------
 
 import { useState, useMemo } from "react";
@@ -30,30 +29,39 @@ import {
 import { closeTableOrders, updateOrder, deleteOrder } from "@/lib/db";
 import { useAuth } from "@/lib/AuthContext";
 
-// Fluxo de estados: recebido → pronto → entregue
 const STATUS_FLOW = ["recebido", "pronto", "entregue"];
 
 const STATUS_META = {
   recebido: {
     label: "Recebido",
-    color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+    // Laranja vibrante — alerta máximo, precisa de ação
+    badge: "bg-orange-500 text-white",
+    badgeSm: "bg-orange-500/20 text-orange-400 border-orange-500/40",
     icon: Bell,
-    nextLabel: "Marcar Pronto",
+    nextLabel: "Pronto",
     nextIcon: ChefHat,
+    // Botão de avanço: verde (sinal de "avançar")
+    nextBtn: "bg-green-600 text-white hover:bg-green-700",
   },
   pronto: {
     label: "Pronto",
-    color: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+    // Azul vibrante — pronto para entrega
+    badge: "bg-blue-500 text-white",
+    badgeSm: "bg-blue-500/20 text-blue-400 border-blue-500/40",
     icon: ChefHat,
-    nextLabel: "Marcar Entregue",
+    nextLabel: "Entregue",
     nextIcon: PackageCheck,
+    nextBtn: "bg-blue-600 text-white hover:bg-blue-700",
   },
   entregue: {
     label: "Entregue",
-    color: "bg-green-500/20 text-green-400 border-green-500/30",
+    // Verde vibrante — concluído
+    badge: "bg-green-600 text-white",
+    badgeSm: "bg-green-600/20 text-green-400 border-green-600/40",
     icon: PackageCheck,
     nextLabel: null,
     nextIcon: null,
+    nextBtn: "",
   },
 };
 
@@ -76,7 +84,6 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
     0
   );
 
-  // Pedidos ordenados por data (mais recente primeiro)
   const sortedOrders = useMemo(() => {
     return [...orders].sort((a, b) => {
       const aT = a.created_date ? new Date(a.created_date).getTime() : 0;
@@ -85,7 +92,6 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
     });
   }, [orders]);
 
-  // Contagem por estado
   const statusCounts = useMemo(() => {
     const counts = { recebido: 0, pronto: 0, entregue: 0 };
     for (const o of orders) {
@@ -136,9 +142,6 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
     }
   };
 
-  // === Cancelar/anular um pedido individual ===
-  // Apaga o documento da coleção orders. O onSnapshot atualiza a UI
-  // automaticamente. Útil para corrigir erros de registo do staff.
   const handleCancelOrder = async (e, order) => {
     e.stopPropagation();
     const confirm = window.confirm(
@@ -158,9 +161,7 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
   const handleClearTable = async () => {
     const confirm = window.confirm(
       `Fechar a conta da Mesa ${tableNumber}?\n\n` +
-        `${orders.length} pedido${orders.length !== 1 ? "s" : ""} ` +
-        `ser${orders.length !== 1 ? "ão" : "á"} marcado${orders.length !== 1 ? "s" : ""} ` +
-        `como "closed" e a mesa desaparece deste ecrã.\n\n` +
+        `${orders.length} pedido${orders.length !== 1 ? "s" : ""} · ` +
         `Total: €${totalAmount.toFixed(2)}\n\nConfirmar?`
     );
     if (!confirm) return;
@@ -182,22 +183,22 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="bg-card border border-primary/30 border-l-4 border-l-green-500 rounded-2xl overflow-hidden shadow-lg shadow-primary/5"
+      className="bg-card rounded-2xl overflow-hidden shadow-md border border-border/60"
     >
-      {/* Cabeçalho */}
+      {/* === Cabeçalho — alto contraste, fundo sólido === */}
       <div
-        className="flex items-center justify-between px-4 py-3 border-b border-border/40 cursor-pointer bg-primary/5"
+        className="flex items-center justify-between px-4 py-3 cursor-pointer bg-primary text-primary-foreground"
         onClick={() => setExpanded((v) => !v)}
       >
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center flex-shrink-0">
-            <Wine className="w-4 h-4 text-primary" />
+        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-primary-foreground/15 flex items-center justify-center flex-shrink-0">
+            <Wine className="w-5 h-5" />
           </div>
           <div className="min-w-0">
-            <p className="font-playfair font-bold text-lg leading-none">
+            <p className="font-playfair font-bold text-xl leading-none">
               Mesa {tableNumber}
             </p>
-            <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
+            <p className="text-[10px] opacity-80 mt-1 flex items-center gap-2 flex-wrap">
               {earliestTime > 0 && (
                 <span className="flex items-center gap-1">
                   <Clock className="w-2.5 h-2.5" /> {formatTime(earliestTime)}
@@ -206,40 +207,43 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
               {latestTime > 0 && latestTime !== earliestTime && (
                 <span>→ {formatTime(latestTime)}</span>
               )}
-              <span className="opacity-50">
+              <span className="opacity-60">
                 · {orders.length} pedido{orders.length !== 1 ? "s" : ""}
               </span>
-              {statusCounts.recebido > 0 && (
-                <span className="bg-yellow-500/15 text-yellow-400 px-1.5 py-0.5 rounded-md font-medium">
-                  {statusCounts.recebido} recebido{statusCounts.recebido !== 1 ? "s" : ""}
-                </span>
-              )}
-              {statusCounts.pronto > 0 && (
-                <span className="bg-blue-500/15 text-blue-400 px-1.5 py-0.5 rounded-md font-medium">
-                  {statusCounts.pronto} pronto{statusCounts.pronto !== 1 ? "s" : ""}
-                </span>
-              )}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-3 flex-shrink-0">
+          {/* Badges de contagem por estado — vibrantes */}
+          <div className="flex items-center gap-1.5">
+            {statusCounts.recebido > 0 && (
+              <span className="bg-orange-500 text-white text-[10px] font-bold px-2 py-1 rounded-lg min-w-[24px] text-center">
+                {statusCounts.recebido}
+              </span>
+            )}
+            {statusCounts.pronto > 0 && (
+              <span className="bg-blue-500 text-white text-[10px] font-bold px-2 py-1 rounded-lg min-w-[24px] text-center">
+                {statusCounts.pronto}
+              </span>
+            )}
+          </div>
           <div className="text-right">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider leading-none">
+            <p className="text-[10px] opacity-70 uppercase tracking-wider leading-none">
               Total
             </p>
-            <p className="font-bold text-primary text-lg leading-none mt-0.5">
+            <p className="font-bold text-lg leading-none mt-0.5">
               €{totalAmount.toFixed(2)}
             </p>
           </div>
           {expanded ? (
-            <ChevronUp className="w-4 h-4 text-muted-foreground" />
+            <ChevronUp className="w-5 h-5 opacity-70" />
           ) : (
-            <ChevronDown className="w-4 h-4 text-muted-foreground" />
+            <ChevronDown className="w-5 h-5 opacity-70" />
           )}
         </div>
       </div>
 
-      {/* Corpo — pedidos individuais com estado */}
+      {/* === Corpo — pedidos individuais === */}
       {expanded && (
         <div className="px-4 py-3 space-y-3">
           {sortedOrders.length === 0 ? (
@@ -255,74 +259,41 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
               return (
                 <div
                   key={order.id}
-                  className={`rounded-xl border border-border/40 overflow-hidden ${
-                    status === "entregue" ? "opacity-60" : ""
+                  className={`rounded-xl border-2 overflow-hidden ${
+                    status === "entregue"
+                      ? "border-green-600/20 opacity-60"
+                      : status === "recebido"
+                      ? "border-orange-500/30"
+                      : "border-blue-500/30"
                   }`}
                 >
-                  {/* Cabeçalho do pedido: hora + estado + botão avançar */}
-                  <div className="flex items-center justify-between px-3 py-2 bg-secondary/30">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                        <Clock className="w-2.5 h-2.5" />
-                        {formatTime(new Date(order.created_date).getTime())}
-                      </span>
-                      <span
-                        className={`text-[10px] font-medium px-2 py-0.5 rounded-full border flex items-center gap-1 ${meta.color}`}
-                      >
-                        <StatusIcon className="w-2.5 h-2.5" />
-                        {meta.label}
-                      </span>
+                  {/* Cabeçalho do pedido — badge de estado vibrante + hora */}
+                  <div className="flex items-center gap-2 px-3 py-2.5 bg-secondary/40">
+                    <span
+                      className={`text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 min-h-[32px] ${meta.badge}`}
+                    >
+                      <StatusIcon className="w-3.5 h-3.5" />
+                      {meta.label}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground flex items-center gap-1 flex-1 min-w-0">
+                      <Clock className="w-2.5 h-2.5" />
+                      {formatTime(new Date(order.created_date).getTime())}
                       {Number(order.merge_count) > 0 && (
-                        <span
-                          className="text-[9px] bg-primary/15 text-primary px-1.5 py-0.5 rounded-md font-medium"
-                          title={`Pedido atualizado ${order.merge_count}×`}
-                        >
+                        <span className="bg-primary/15 text-primary px-1.5 py-0.5 rounded-md font-medium ml-1">
                           +{order.merge_count}
                         </span>
                       )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      {meta.nextLabel && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAdvanceStatus(order);
-                          }}
-                          disabled={isAdvancing}
-                          className="flex items-center gap-1 bg-primary text-primary-foreground text-[10px] font-semibold px-2.5 py-1 rounded-lg hover:bg-primary/90 active:scale-95 transition-all disabled:opacity-50"
-                        >
-                          {isAdvancing ? (
-                            <span className="w-3 h-3 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                          ) : (
-                            <NextIcon className="w-3 h-3" />
-                          )}
-                          <span className="hidden sm:inline">{meta.nextLabel}</span>
-                          <span className="sm:hidden">{meta.label === "recebido" ? "Pronto" : "Entregue"}</span>
-                        </button>
-                      )}
-                      {/* Botão Cancelar/Anular pedido */}
-                      <button
-                        onClick={(e) => handleCancelOrder(e, order)}
-                        title="Anular pedido"
-                        className="w-7 h-7 rounded-lg bg-red-500/10 flex items-center justify-center hover:bg-red-500/20 transition-colors"
-                      >
-                        <XCircle className="w-3.5 h-3.5 text-red-400" />
-                      </button>
-                    </div>
+                    </span>
                   </div>
 
                   {/* Itens */}
                   <div className="px-3 py-2 space-y-1">
                     {(order.items || []).map((item, i) => {
-                      // Verifica se este item foi adicionado após o pedido
-                      // original (via merge). Compara added_at com created_date.
                       const isMergedItem =
                         item.added_at &&
                         order.created_date &&
                         new Date(item.added_at).getTime() >
                           new Date(order.created_date).getTime();
-                      // Se o item já existia mas teve quantidade aumentada
-                      // no último merge, mostra "+N" ao lado da quantidade.
                       const mergeQty = Number(item.last_merge_qty) || 0;
 
                       return (
@@ -336,14 +307,12 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
                             <span className="bg-primary/20 text-primary font-bold px-1 py-0.5 rounded text-[10px] flex-shrink-0 min-w-[22px] text-center">
                               {item.quantity}×
                             </span>
-                            {/* Badge "+N" para itens que tiveram quantidade aumentada */}
                             {mergeQty > 0 && (
                               <span className="bg-green-500/20 text-green-400 font-bold px-1 py-0.5 rounded text-[9px] flex-shrink-0">
                                 +{mergeQty}
                               </span>
                             )}
                             <span className="truncate">{item.product_name}</span>
-                            {/* Badge "novo" para itens adicionados via merge */}
                             {isMergedItem && (
                               <span className="bg-primary/20 text-primary font-bold px-1 py-0.5 rounded text-[8px] flex-shrink-0 uppercase tracking-wider">
                                 novo
@@ -365,20 +334,58 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
                       </div>
                     )}
                   </div>
+
+                  {/* === Barra de ações — touch targets grandes === */}
+                  {/* Botão Cancelar ISOLADO à direita, separado dos botões de avançar */}
+                  {meta.nextLabel && (
+                    <div className="flex items-center gap-2 px-3 py-2.5 bg-secondary/30 border-t border-border/30">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAdvanceStatus(order);
+                        }}
+                        disabled={isAdvancing}
+                        className={`flex-1 flex items-center justify-center gap-1.5 text-sm font-bold px-4 py-3 rounded-xl min-h-[44px] active:scale-95 transition-all disabled:opacity-50 ${meta.nextBtn}`}
+                      >
+                        {isAdvancing ? (
+                          <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                          <NextIcon className="w-4 h-4" />
+                        )}
+                        {meta.nextLabel}
+                      </button>
+                      {/* Botão Cancelar — isolado com margem e cor distinta */}
+                      <button
+                        onClick={(e) => handleCancelOrder(e, order)}
+                        title="Anular pedido"
+                        className="flex-shrink-0 w-11 h-11 min-h-[44px] rounded-xl bg-red-500/10 border border-red-500/20 flex items-center justify-center hover:bg-red-500/20 active:scale-95 transition-all"
+                      >
+                        <XCircle className="w-5 h-5 text-red-400" />
+                      </button>
+                    </div>
+                  )}
+                  {!meta.nextLabel && (
+                    <div className="flex items-center justify-center px-3 py-2.5 bg-green-600/10 border-t border-green-600/20">
+                      <span className="text-green-400 text-sm font-bold flex items-center gap-1">
+                        <CheckCircle2 className="w-4 h-4" />
+                        Entregue
+                      </span>
+                    </div>
+                  )}
                 </div>
               );
             })
           )}
 
-          {/* Botão Adicionar Pedido (POS mode) */}
+          {/* Botão Adicionar Pedido — touch target grande */}
           <button
             onClick={(e) => {
               e.stopPropagation();
               if (onAddOrder) onAddOrder(tableNumber);
             }}
-            className="w-full flex items-center justify-center gap-1.5 bg-primary/10 text-primary border border-dashed border-primary/40 text-xs font-semibold py-2.5 rounded-xl hover:bg-primary/20 transition-colors"
+            className="w-full flex items-center justify-center gap-2 bg-primary/10 text-primary border-2 border-dashed border-primary/40 text-sm font-bold py-3 rounded-xl min-h-[44px] hover:bg-primary/15 active:scale-95 transition-all"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-4 h-4" />
             Adicionar Pedido
           </button>
 
@@ -390,8 +397,8 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
         </div>
       )}
 
-      {/* Rodapé — Total + Limpar Mesa */}
-      <div className="flex items-center justify-between px-4 py-3 bg-red-500/5 border-t border-red-500/20">
+      {/* === Rodapé — Total + Limpar Mesa === */}
+      <div className="flex items-center justify-between px-4 py-3 bg-red-500/5 border-t-2 border-red-500/20">
         <div>
           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
             Total a pagar
@@ -406,7 +413,7 @@ export default function TableTab({ tableNumber, orders, onAddOrder }) {
             handleClearTable();
           }}
           disabled={clearing}
-          className="flex items-center gap-1.5 bg-red-500 text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-red-600 active:scale-95 transition-all disabled:opacity-50 shadow-lg shadow-red-500/20"
+          className="flex items-center gap-2 bg-red-600 text-white text-sm font-bold px-5 py-3 rounded-xl min-h-[44px] hover:bg-red-700 active:scale-95 transition-all disabled:opacity-50 shadow-md shadow-red-600/30"
         >
           <Trash2 className="w-4 h-4" />
           {clearing ? "A fechar..." : "Limpar Mesa"}
