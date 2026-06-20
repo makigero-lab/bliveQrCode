@@ -532,7 +532,7 @@ function AccountModal({ tableNumber, onClose }) {
               </div>
               <p className="text-[10px] text-muted-foreground/60 text-right max-w-[140px]">
                 Os pedidos são preparados pela ordem de chegada.
-                O pagamento é feito na mesa ao staff.
+                O pagamento é feito na caixa ao sair.
               </p>
             </div>
           </div>
